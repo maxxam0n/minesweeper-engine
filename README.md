@@ -2,8 +2,6 @@
 
 [![NPM Version](https://img.shields.io/npm/v/@maxxam0n/minesweeper-engine.svg)](https://www.npmjs.com/package/@maxxam0n/minesweeper-engine)
 [![License](https://img.shields.io/npm/l/@maxxam0n/minesweeper-engine.svg)](https://github.com/maxxam0n/minesweeper-engine/blob/main/LICENSE)
-[![Build Status](https://github.com/maxxam0n/minesweeper-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/maxxam0n/minesweeper-engine/actions)
-[![NPM Downloads](https://img.shields.io/npm/dt/@maxxam0n/minesweeper-engine.svg)](https://www.npmjs.com/package/@maxxam0n/minesweeper-engine)
 
 A lightweight, dependency-free, and platform-agnostic Minesweeper game engine written in TypeScript. It provides a clean API for game logic, state management, and includes a built-in solver for analyzing game states.
 
