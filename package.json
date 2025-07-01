@@ -1,0 +1,43 @@
+{
+	"name": "@maxxam0n/minesweeper-engine",
+	"private": false,
+	"version": "0.0.1",
+	"keywords": [
+		"minesweeper",
+		"engine",
+		"game",
+		"solver"
+	],
+	"description": "A minesweeper game engine written in Typescript",
+	"author": "maximxam0n@gmail.com",
+	"repository": "https://github.com/maxxam0n/minesweeper-engine",
+	"license": "MIT",
+	"type": "module",
+	"main": "./dist/minesweeper-engine.umd.cjs",
+	"module": "./dist/minesweeper-engine.es.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/minesweeper-engine.es.js",
+			"require": "./dist/minesweeper-engine.umd.cjs",
+			"types": "./dist/index.d.ts"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "vite build",
+		"type-check": "tsc --noEmit",
+		"prepublishOnly": "npm run build"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.29.0",
+		"@types/node": "^24.0.7",
+		"eslint": "^9.29.0",
+		"typescript": "~5.8.3",
+		"typescript-eslint": "^8.34.1",
+		"vite": "^5.4.19",
+		"vite-plugin-dts": "^4.5.4"
+	}
+}
