@@ -1,21 +1,27 @@
-import { BaseField } from './base-field'
-import { FieldFactory } from './field-factory'
-import { SimpleCell } from './simple-cell'
-import {
+import { createKey } from '../lib/utils'
+import { isValidGameParams } from '../lib/validate-params'
+import type { BaseField } from '../model/base-field'
+import { FieldFactory } from '../model/field-factory'
+import { SimpleCell } from '../model/simple-cell'
+import type {
+	ActionResult,
 	CellData,
+	FieldState,
+	FieldType,
 	GameMode,
 	GameParams,
-	GameStatus,
-	Position,
-	ActionResult,
 	GameSnapshot,
-	FieldState,
+	GameStatus,
 	MineSweeperConfig,
-} from './types'
+	Position,
+} from '../model/types'
+
+import { Solver } from './field-solver'
 
 export class GameEngine {
 	private mode: GameMode
-	private field: BaseField<SimpleCell>
+	private fieldType: FieldType
+	private field: BaseField<SimpleCell> | null
 	private params: GameParams
 	private status: GameStatus
 
@@ -23,15 +29,25 @@ export class GameEngine {
 
 	constructor({ mode = 'guessing', ...config }: MineSweeperConfig) {
 		this.mode = mode
+		this.fieldType = config.type
 		this.params = config.params
+		this.status = 'idle'
+
+		// Защита от невалидных параметров: не инициализируем поле, чтобы не падать/не зависать.
+		if (!isValidGameParams(this.params)) {
+			this.field = null
+			this.flagsRemaining = 0
+			return
+		}
+
 		this.field = FieldFactory.create(config)
 		this.flagsRemaining = config.params.mines
-		this.status = GameStatus.Idle
 	}
 
-	public revealCell(pos: Position): ActionResult {
+	public revealCell(this: GameEngine, pos: Position): ActionResult {
+		if (!this.field) return GameEngine.emptyActionResult(pos)
 		let actionStatus: GameStatus = this.status
-		const operatedField = this.field.cloneSelf()
+		const operetadField = this.field.cloneSelf()
 
 		const flaggedCells: CellData[] = []
 		const unflaggedCells: CellData[] = []
@@ -40,35 +56,62 @@ export class GameEngine {
 		const explodedCells: CellData[] = []
 
 		// 1. Обработка первого клика / начала игры
-		if (actionStatus === GameStatus.Idle) {
-			if (!operatedField.isMined) operatedField.placeMines()
-			if (operatedField.getCellData(pos).isMine) {
-				const unminedCell = operatedField.grid
-					.flat()
-					.find(cell => !cell.isMine)
+		if (actionStatus === 'idle') {
+			if (!operetadField.isMined) operetadField.placeMines(pos)
+			if (operetadField.getCellData(pos).isMine) {
+				const unminedCell = operetadField.grid.flat().find(cell => !cell.isMine)
 				if (!unminedCell) {
-					actionStatus = GameStatus.Lost
+					actionStatus = 'lost'
 				} else {
-					operatedField.relocateMine(pos, unminedCell.position)
-					actionStatus = GameStatus.Playing
+					operetadField.relocateMine(pos, unminedCell.position)
+					actionStatus = 'playing'
 				}
 			} else {
-				actionStatus = GameStatus.Playing
+				actionStatus = 'playing'
 			}
 		}
 
-		const target = operatedField.getCell(pos)
+		const target = operetadField.getCell(pos)
 
 		// 2. Основная логика
-		if (actionStatus === GameStatus.Playing && !target.isFlagged) {
+		if (actionStatus === 'playing' && !target.isFlagged) {
 			const cellData = target.getData()
+
 			if (target.isMine) {
-				target.isRevealed = true
-				handledCells.push(cellData)
-				explodedCells.push(cellData)
+				const handleLoss = () => {
+					// Обычная логика проигрыша
+					target.isRevealed = true
+					handledCells.push(cellData)
+					explodedCells.push(cellData)
+				}
+
+				if (this.mode === 'no-guessing') {
+					const solver = new Solver({
+						params: this.params,
+						type: this.fieldType,
+						data: operetadField.getState().field,
+					})
+
+					const probabilities = solver.solve()
+
+					if (solver.isGuessingState(probabilities)) {
+						if (probabilities.some(p => p.value === 1 && createKey(p.position) === target.key)) {
+							// Состояние угадывания, но клик по клетке с вероятностью мины - 100% = проигрыш
+							handleLoss()
+						} else {
+							return this.toggleFlag(pos)
+						}
+					} else {
+						// Не состояние угадывания, проигрыш
+						handleLoss()
+					}
+				} else {
+					// Режим угадывания, проигрыш
+					handleLoss()
+				}
 			} else if (target.isRevealed) {
 				// chord/chording. Когда кликаем по открытой клетке
-				const result = this.handleRevealedClick(target, operatedField)
+				const result = this.handleRevealedClick(target, operetadField)
 				revealedCells.push(...result.revealedCells)
 				unflaggedCells.push(...result.unflaggedCells)
 				explodedCells.push(...result.explodedCells)
@@ -76,18 +119,18 @@ export class GameEngine {
 			} else {
 				// Невскрытая и не мина
 				handledCells.push(cellData)
-				const result = this.openArea(pos, operatedField)
+				const result = this.openArea(pos, operetadField)
 				revealedCells.push(...result.revealedCells)
 				unflaggedCells.push(...result.unflaggedCells)
 			}
 		}
 
-		const resultState = operatedField.getState()
+		const resultState = operetadField.getState()
 		actionStatus = this.determineStatus(resultState)
 
 		const applyAction = () => {
 			this.status = actionStatus
-			this.field = operatedField
+			this.field = operetadField
 			this.flagsRemaining = this.getFlagsRemaining(resultState)
 		}
 
@@ -109,16 +152,17 @@ export class GameEngine {
 		}
 	}
 
-	public toggleFlag(pos: Position): ActionResult {
-		const operatedField = this.field.cloneSelf()
+	public toggleFlag(this: GameEngine, pos: Position): ActionResult {
+		if (!this.field) return GameEngine.emptyActionResult(pos)
+		const operetadField = this.field.cloneSelf()
 
 		const flaggedCells: CellData[] = []
 		const unflaggedCells: CellData[] = []
 
-		const cell = operatedField.getCell(pos)
+		const cell = operetadField.getCell(pos)
 		const cellData = cell.getData()
 
-		if (this.status === GameStatus.Playing && !cell.isRevealed) {
+		if (this.status === 'playing' && !cell.isRevealed) {
 			if (cell.isFlagged) {
 				// Снимаем флаг
 				cell.isFlagged = false
@@ -130,10 +174,10 @@ export class GameEngine {
 			}
 		}
 
-		const resultState = operatedField.getState()
+		const resultState = operetadField.getState()
 
 		const applyAction = () => {
-			this.field = operatedField
+			this.field = operetadField
 			this.flagsRemaining = this.getFlagsRemaining(resultState)
 		}
 
@@ -153,10 +197,7 @@ export class GameEngine {
 		}
 	}
 
-	private handleRevealedClick(
-		targetCell: CellData,
-		operatedField: BaseField<SimpleCell>
-	) {
+	private handleRevealedClick(targetCell: CellData, operatedField: BaseField<SimpleCell>) {
 		const unflaggedCells: CellData[] = []
 		const revealedCells: CellData[] = []
 		const handledCells: CellData[] = []
@@ -164,7 +205,7 @@ export class GameEngine {
 
 		const siblings = operatedField.getSiblings(targetCell.position)
 		const closedSiblings = siblings.filter(({ isUntouched }) => isUntouched)
-		const flags = siblings.filter(sib => sib.isFlagged).length
+		const flags = siblings.reduce((sum, sib) => sum + +sib.isFlagged, 0)
 
 		// Условие открытия внутри аккорда
 		if (flags === targetCell.adjacentMines) {
@@ -218,9 +259,9 @@ export class GameEngine {
 		const revealedCount = resultState.revealedCells.length
 		const { cols, mines, rows } = this.params
 
-		if (resultState.explodedCells.length > 0) return GameStatus.Lost
-		else if (revealedCount === cols * rows - mines) return GameStatus.Won
-		else return GameStatus.Playing
+		if (resultState.explodedCells.length > 0) return 'lost'
+		else if (revealedCount === cols * rows - mines) return 'won'
+		else return 'playing'
 	}
 
 	private getFlagsRemaining(resultState: FieldState) {
@@ -228,6 +269,38 @@ export class GameEngine {
 	}
 
 	get gameSnapshot(): GameSnapshot {
+		if (!this.field) return GameEngine.emptySnapshot(this.status)
 		return Object.assign(this.field.getState(), { status: this.status })
+	}
+
+	static emptySnapshot(status: GameStatus): GameSnapshot {
+		return {
+			status,
+			field: [],
+			minedCells: [],
+			explodedCells: [],
+			flaggedCells: [],
+			notFoundMines: [],
+			errorFlags: [],
+			revealedCells: [],
+		}
+	}
+
+	static emptyActionResult(pos: Position): ActionResult {
+		const target = SimpleCell.createEmpty(pos)
+		return {
+			data: {
+				actionSnapshot: GameEngine.emptySnapshot('idle'),
+				actionChanges: {
+					target,
+					handledCells: [],
+					flaggedCells: [],
+					unflaggedCells: [],
+					revealedCells: [],
+					explodedCells: [],
+				},
+			},
+			apply: () => {},
+		}
 	}
 }

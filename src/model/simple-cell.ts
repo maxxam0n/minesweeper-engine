@@ -1,5 +1,6 @@
 import { createKey } from '../lib/utils'
-import { CellData, ConstructorCellProps, Position } from './types'
+
+import type { CellData, ConstructorCellProps, Position } from './types'
 
 export class SimpleCell implements CellData {
 	public readonly key: string
@@ -8,6 +9,22 @@ export class SimpleCell implements CellData {
 	public isRevealed: boolean
 	public isFlagged: boolean
 	public adjacentMines: number
+
+	static createEmpty(pos: Position): CellData {
+		return {
+			key: `empty-${createKey(pos)}`,
+			position: pos,
+			isMine: false,
+			adjacentMines: 0,
+			notFoundMine: false,
+			isRevealed: false,
+			isFlagged: false,
+			isEmpty: false,
+			isExploded: false,
+			isMissed: false,
+			isUntouched: true,
+		}
+	}
 
 	constructor({
 		position,

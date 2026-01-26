@@ -11,7 +11,7 @@ A lightweight, dependency-free, and platform-agnostic Minesweeper game engine wr
 -  **Immutable State Management**: Actions like `revealCell` or `toggleFlag` don't mutate the game state directly. Instead, they return the resulting state and an `apply` function, making it perfect for UI frameworks like React or Vue.
 -  **Isomorphic / Universal**: Zero dependencies on browser or Node.js APIs. Use it anywhere JavaScript runs.
 -  **Built-in Solver**: Includes a solver that can determine certain mines and safe cells, with a foundation for more advanced probabilistic analysis.
--  **Highly Configurable**: Easily configure board dimensions and mine count. The architecture is designed to support different field shapes in the future (e.g., hexagonal).
+-  **Multiple Field Types**: Support for square, hexagonal, and triangular field shapes.
 -  **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
 -  **Written in TypeScript**: Strong typing for a predictable and robust developer experience.
 
@@ -82,8 +82,9 @@ The main class for managing the game flow.
 Creates a new game instance.
 
 -  `config`: `MineSweeperConfig`
-   -  `type`: The shape of the field. Currently supports `'square'`.
+   -  `type`: The shape of the field. Supports `'square'`, `'hexagonal'`, or `'triangle'`.
    -  `params`: `GameParams` (`rows`, `cols`, `mines`).
+   -  `mode?`: Game mode - `'no-guessing'` (guarantees logical path) or `'guessing'` (default).
    -  `rng?`: An optional Random Number Generator function (`() => number`) for deterministic testing. Defaults to `Math.random`.
 
 #### `engine.revealCell(position)`
@@ -165,9 +166,7 @@ const engine = new GameEngine({
 
 This project is actively maintained. Future plans include:
 
--  [ ] **No-Guessing Mode**: A game mode that guarantees a logical path to victory.
 -  [ ] **Advanced Solver Logic**: Implementing probabilistic models and set-based analysis for situations that require guessing.
--  [ ] **More Field Types**: Adding support for hexagonal and triangular grids.
 
 ## 🤝 Contributing
 

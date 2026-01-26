@@ -9,16 +9,11 @@ export type Position = {
 	row: number
 }
 
-export type FieldType = 'square'
+export type FieldType = 'square' | 'hexagonal' | 'triangle'
 
-export enum GameStatus {
-	Idle = 'idle',
-	Playing = 'playing',
-	Won = 'won',
-	Lost = 'lost',
-}
+export type GameStatus = 'idle' | 'playing' | 'won' | 'lost'
 
-export type GameMode = 'guessing'
+export type GameMode = 'no-guessing' | 'guessing'
 
 export interface CellData {
 	key: string
@@ -49,12 +44,8 @@ export interface FieldState {
 	revealedCells: CellData[]
 }
 
-export interface ConstructorCellProps {
+export interface ConstructorCellProps extends Partial<CellData> {
 	position: Position
-	isMine?: boolean
-	isRevealed?: boolean
-	isFlagged?: boolean
-	adjacentMines?: number
 }
 
 export interface ConstrutorFieldProps {

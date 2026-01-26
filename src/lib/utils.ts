@@ -1,12 +1,8 @@
-import { Position } from '../model/types'
+import type { Position } from '../model/types'
 
-export const createGrid = <T>(
-	rows: number,
-	cols: number,
-	cb: ({ row, col }: Position) => T
-) => {
+export const createGrid = <T>(rows: number, cols: number, cb: ({ row, col }: Position) => T) => {
 	return Array.from({ length: rows }, (_, row) =>
-		Array.from({ length: cols }, (_, col) => cb({ row, col }))
+		Array.from({ length: cols }, (_, col) => cb({ row, col })),
 	)
 }
 
