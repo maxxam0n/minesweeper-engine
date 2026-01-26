@@ -3,14 +3,15 @@
 [![NPM Version](https://img.shields.io/npm/v/@maxxam0n/minesweeper-engine.svg)](https://www.npmjs.com/package/@maxxam0n/minesweeper-engine)
 [![License](https://img.shields.io/npm/l/@maxxam0n/minesweeper-engine.svg)](https://github.com/maxxam0n/minesweeper-engine/blob/main/LICENSE)
 
-A lightweight, dependency-free, and platform-agnostic Minesweeper game engine written in TypeScript. It provides a clean API for game logic, state management, and includes a built-in solver for analyzing game states.
+A lightweight, dependency-free, and platform-agnostic Minesweeper game engine written in TypeScript. It provides a clean API for game logic and state management, and includes built-in solvers for analyzing game states.
 
 ## ✨ Features
 
--  **Clean Architecture**: Fully decoupled logic for the game board (`Field`), game rules (`GameEngine`), and AI (`Solver`).
+-  **Clean Architecture**: Fully decoupled logic for the game board (`Field`), game rules (`MinesweeperEngine`), and AI analysis (`MinesweeperSolver`).
 -  **Immutable State Management**: Actions like `revealCell` or `toggleFlag` don't mutate the game state directly. Instead, they return the resulting state and an `apply` function, making it perfect for UI frameworks like React or Vue.
 -  **Isomorphic / Universal**: Zero dependencies on browser or Node.js APIs. Use it anywhere JavaScript runs.
 -  **Built-in Solver**: Includes a solver that can determine certain mines and safe cells, with a foundation for more advanced probabilistic analysis.
+-  **Ideal Metrics Solver**: Includes an "ideal" solver to estimate minimal click count for a given fully-mined field (useful for score/efficiency metrics).
 -  **Multiple Field Types**: Support for square, hexagonal, and triangular field shapes.
 -  **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
 -  **Written in TypeScript**: Strong typing for a predictable and robust developer experience.
@@ -18,13 +19,10 @@ A lightweight, dependency-free, and platform-agnostic Minesweeper game engine wr
 ## 📦 Installation
 
 ```bash
-# npm
 npm install @maxxam0n/minesweeper-engine
 
-# yarn
 yarn add @maxxam0n/minesweeper-engine
 
-# pnpm
 pnpm add @maxxam0n/minesweeper-engine
 ```
 
@@ -33,10 +31,10 @@ pnpm add @maxxam0n/minesweeper-engine
 Here's a quick example of how to create a game, perform an action, and get the updated state.
 
 ```typescript
-import { GameEngine, GameStatus } from '@maxxam0n/minesweeper-engine'
+import { MinesweeperEngine } from '@maxxam0n/minesweeper-engine'
 
 // 1. Create a new game engine instance
-const engine = new GameEngine({
+const engine = new MinesweeperEngine({
 	type: 'square', // The shape of the field
 	params: {
 		rows: 10,
@@ -45,14 +43,14 @@ const engine = new GameEngine({
 	},
 })
 
-console.log('Game started with status:', engine.gameSnapshot.status) // -> GameStatus.Idle
+console.log('Game started with status:', engine.gameSnapshot.status) // -> 'idle'
 
 // 2. Perform an action (e.g., reveal a cell)
 // This returns the result of the action without changing the engine's state yet.
 const { data, apply } = engine.revealCell({ row: 5, col: 5 })
 
 // `data.actionSnapshot` contains the full game state *if* the action is applied.
-console.log('Hypothetical status after reveal:', data.actionSnapshot.status) // -> GameStatus.Playing
+console.log('Hypothetical status after reveal:', data.actionSnapshot.status) // -> 'playing'
 
 // `data.actionChanges` contains a delta of what will change.
 // Useful for targeted UI updates and animations.
@@ -62,7 +60,7 @@ console.log(`Revealed ${data.actionChanges.revealedCells.length} cells.`)
 apply()
 
 // 4. Check the new state of the game
-console.log('Actual game status:', engine.gameSnapshot.status) // -> GameStatus.Playing
+console.log('Actual game status:', engine.gameSnapshot.status) // -> 'playing'
 
 // You can continue to make moves...
 const flagResult = engine.toggleFlag({ row: 0, col: 0 })
@@ -73,18 +71,18 @@ console.log(engine.gameSnapshot.flaggedCells.length) // -> 1
 
 ## API Reference
 
-### `GameEngine`
+### `MinesweeperEngine`
 
 The main class for managing the game flow.
 
-#### `new GameEngine(config)`
+#### `new MinesweeperEngine(config)`
 
 Creates a new game instance.
 
 -  `config`: `MineSweeperConfig`
    -  `type`: The shape of the field. Supports `'square'`, `'hexagonal'`, or `'triangle'`.
    -  `params`: `GameParams` (`rows`, `cols`, `mines`).
-   -  `mode?`: Game mode - `'no-guessing'` (guarantees logical path) or `'guessing'` (default).
+   -  `mode?`: Game mode - `'guessing'` (default) or `'no-guessing'` (reduces "guessing" outcomes by preferring a flag action in some guessing states).
    -  `rng?`: An optional Random Number Generator function (`() => number`) for deterministic testing. Defaults to `Math.random`.
 
 #### `engine.revealCell(position)`
@@ -112,31 +110,48 @@ The object returned by action methods. It follows a command pattern, allowing yo
 -  `data`:
    -  `actionSnapshot`: A full `GameSnapshot` of what the state will be _after_ the action is applied.
    -  `actionChanges`: An `ActionChanges` object containing arrays of cells that were specifically affected by the action (e.g., `revealedCells`, `explodedCells`). This is ideal for fine-grained UI updates.
--  `apply`: A function `() => void` that, when called, commits the action and updates the internal state of the `GameEngine` instance.
+-  `apply`: A function `() => void` that, when called, commits the action and updates the internal state of the `MinesweeperEngine` instance.
 
-### `Solver`
+### `MinesweeperSolver`
 
 A class for analyzing a game board to find guaranteed moves.
 
 ```typescript
-import { Solver } from '@maxxam0n/minesweeper-engine'
+import { MinesweeperSolver } from '@maxxam0n/minesweeper-engine'
 
 const gameParams = { rows: 10, cols: 10, mines: 15 }
 
-// Note: The Solver needs the same game data as the engine.
+// Note: The MinesweeperSolver needs the same game data as the engine.
 // You can get this from the engine's snapshot.
-const solver = new Solver({
+const solver = new MinesweeperSolver({
 	type: 'square',
 	params: gameParams,
 	data: engine.gameSnapshot.field, // Use the current field from the game
 })
 
-// Get an array of probabilities for unrevealed cells.
+// Get an array of probabilities for (some) unrevealed cells.
 // value: 1 = 100% a mine, 0 = 100% safe.
 const hints = solver.solve()
 
 const safeMoves = hints.filter(h => h.value === 0)
 console.log(`Found ${safeMoves.length} guaranteed safe moves.`)
+```
+
+### `MinesweeperIdealSolver`
+
+Estimates minimal click count for a given field when the mine layout is already known in `data` (i.e., `isMine` is already populated — after the first reveal, or from your own pre-generated field).
+
+```typescript
+import { MinesweeperIdealSolver } from '@maxxam0n/minesweeper-engine'
+
+const ideal = new MinesweeperIdealSolver({
+	type: 'square',
+	params: gameParams,
+	data: engine.gameSnapshot.field,
+})
+
+const metrics = ideal.getMetrics()
+console.log(metrics.remaining)
 ```
 
 ## 💡 Advanced Usage
@@ -149,11 +164,12 @@ For testing or creating shareable game challenges, you can provide your own seed
 // You might need to install a library for this, e.g., `seedrandom`
 // npm install seedrandom
 import seedrandom from 'seedrandom'
+import { MinesweeperEngine } from '@maxxam0n/minesweeper-engine'
 
 const seed = 'my-secret-seed'
 const deterministicRng = seedrandom(seed)
 
-const engine = new GameEngine({
+const engine = new MinesweeperEngine({
 	type: 'square',
 	params: { rows: 16, cols: 30, mines: 99 },
 	rng: deterministicRng, // Inject the seeded RNG
