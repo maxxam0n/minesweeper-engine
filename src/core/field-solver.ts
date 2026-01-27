@@ -24,6 +24,11 @@ interface RegionConstraint {
 const MAX_FULL_ENUM_VARS = 18 // полный перебор выполняем, если переменных не более этого значения
 const MAX_LOOKAHEAD_VARS = 30 // shallow look-ahead применяем, если переменных не более этого значения
 
+/**
+ * Solver for calculating mine probabilities and determining safe moves.
+ * Uses constraint satisfaction, set theory, and enumeration techniques
+ * to identify cells that are definitely safe or definitely mines.
+ */
 export class Solver {
 	private field: BaseField<SimpleCell>
 	private probabilities: Map<string, MineProbability>
@@ -31,11 +36,22 @@ export class Solver {
 	// Кэш результатов полного перебора: key -> { total, counts }
 	private static enumerationCache: Map<string, { total: number; counts: number[] }> = new Map()
 
+	/**
+	 * Creates a new solver instance for the given field configuration.
+	 * @param config - Field configuration including parameters, type, and optional data
+	 */
 	constructor(config: FactoryConfig) {
 		this.probabilities = new Map()
 		this.field = FieldFactory.create(config)
 	}
 
+	/**
+	 * Determines if the current state requires guessing.
+	 * A guessing state exists when all calculated probabilities are greater than 0
+	 * (no cells are definitively safe).
+	 * @param probabilities - Array of mine probabilities for cells
+	 * @returns True if guessing is required, false if there are safe moves available
+	 */
 	public isGuessingState(probabilities: MineProbability[]): boolean {
 		for (const prob of probabilities) {
 			if (prob.value === 0) {
@@ -45,11 +61,25 @@ export class Solver {
 		return true
 	}
 
+	/**
+	 * Groups revealed cells into connected regions based on adjacency.
+	 * Useful for analyzing independent constraint groups.
+	 * @returns Array of cell arrays, where each array represents a connected region
+	 */
 	public createConnectedRegions(): CellData[][] {
 		const fieldState = this.field.getState()
 		return this.groupConnectedRegions(fieldState.revealedCells)
 	}
 
+	/**
+	 * Solves the field by calculating mine probabilities for all unrevealed cells.
+	 * Uses multiple inference techniques in order:
+	 * 1. Direct constraint inference (certain mines/safe cells)
+	 * 2. Subset difference analysis
+	 * 3. Set theory constraints
+	 * 4. Local ratio approximations (when deterministic methods are exhausted)
+	 * @returns Array of mine probabilities for all cells with calculated probabilities
+	 */
 	public solve(): MineProbability[] {
 		const fieldState = this.field.getState()
 		// Очищаем вероятности перед новым решением (на случай повторного вызова)

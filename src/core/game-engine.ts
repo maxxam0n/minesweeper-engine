@@ -18,6 +18,10 @@ import type {
 
 import { Solver } from './field-solver'
 
+/**
+ * Main game engine for managing minesweeper game state and actions.
+ * Handles cell revelation, flagging, game status, and mode-specific logic.
+ */
 export class GameEngine {
 	private mode: GameMode
 	private fieldType: FieldType
@@ -27,6 +31,11 @@ export class GameEngine {
 
 	private flagsRemaining: number
 
+	/**
+	 * Creates a new game engine instance.
+	 * @param config - Game configuration including field type, parameters, and optional mode
+	 * @param config.mode - Game mode ('guessing' or 'no-guessing'). Defaults to 'guessing'
+	 */
 	constructor({ mode = 'guessing', ...config }: MineSweeperConfig) {
 		this.mode = mode
 		this.fieldType = config.type
@@ -44,6 +53,14 @@ export class GameEngine {
 		this.flagsRemaining = config.params.mines
 	}
 
+	/**
+	 * Reveals a cell at the specified position.
+	 * On the first click, mines are placed ensuring the clicked cell is safe.
+	 * In 'no-guessing' mode, prevents revealing cells when solver detects uncertain states.
+	 * Supports chord clicking (clicking on revealed cells to reveal adjacent safe cells).
+	 * @param pos - Position of the cell to reveal
+	 * @returns ActionResult containing the changes and a function to apply them
+	 */
 	public revealCell(this: GameEngine, pos: Position): ActionResult {
 		if (!this.field) return GameEngine.emptyActionResult(pos)
 		let actionStatus: GameStatus = this.status
@@ -152,6 +169,12 @@ export class GameEngine {
 		}
 	}
 
+	/**
+	 * Toggles the flag state of a cell at the specified position.
+	 * Only works on unrevealed cells during active gameplay.
+	 * @param pos - Position of the cell to flag/unflag
+	 * @returns ActionResult containing the changes and a function to apply them
+	 */
 	public toggleFlag(this: GameEngine, pos: Position): ActionResult {
 		if (!this.field) return GameEngine.emptyActionResult(pos)
 		const operetadField = this.field.cloneSelf()
@@ -268,11 +291,20 @@ export class GameEngine {
 		return this.params.mines - resultState.flaggedCells.length
 	}
 
+	/**
+	 * Gets the current complete game state snapshot.
+	 * @returns GameSnapshot containing field state and current game status
+	 */
 	get gameSnapshot(): GameSnapshot {
 		if (!this.field) return GameEngine.emptySnapshot(this.status)
 		return Object.assign(this.field.getState(), { status: this.status })
 	}
 
+	/**
+	 * Creates an empty game snapshot for invalid or uninitialized game states.
+	 * @param status - Game status to assign to the snapshot
+	 * @returns Empty GameSnapshot with the specified status
+	 */
 	static emptySnapshot(status: GameStatus): GameSnapshot {
 		return {
 			status,
@@ -286,6 +318,11 @@ export class GameEngine {
 		}
 	}
 
+	/**
+	 * Creates an empty action result for invalid actions.
+	 * @param pos - Position that was targeted by the action
+	 * @returns Empty ActionResult with no-op apply function
+	 */
 	static emptyActionResult(pos: Position): ActionResult {
 		const target = SimpleCell.createEmpty(pos)
 		return {

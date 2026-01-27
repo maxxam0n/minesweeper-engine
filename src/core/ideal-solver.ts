@@ -3,51 +3,63 @@ import { FieldFactory } from '../model/field-factory'
 import type { SimpleCell } from '../model/simple-cell'
 import type { FactoryConfig } from '../model/types'
 
+/**
+ * Metrics for ideal solve analysis.
+ */
 export interface IdealSolveMetrics {
 	/**
-	 * Оценка минимального количества левых кликов для решения поля,
-	 * учитывая возможность аккордов (chord).
+	 * Estimated minimum number of left clicks required to solve the field,
+	 * accounting for chord (middle-click) opportunities.
 	 */
 	total: number
 	/**
-	 * Оценка минимального количества левых кликов для решения ОСТАВШЕГОСЯ поля
-	 * из текущего состояния, учитывая возможность аккордов.
+	 * Estimated minimum number of left clicks required to solve the REMAINING field
+	 * from the current state, accounting for chord opportunities.
 	 */
 	remaining: number
 }
 
+/**
+ * Configuration options for ideal solver behavior.
+ */
 export interface IdealSolverOptions {
 	/**
-	 * Если true — учитываем постановку флагов как отдельные клики (right click).
+	 * If true, flag placement counts as separate clicks (right clicks).
 	 */
 	countFlags?: boolean
 	/**
-	 * Если true — аккорд возможен только когда вокруг открытой клетки
-	 * проставлены флаги на всех соседних минах (идеально корректные флаги).
+	 * If true, chord is only possible when all adjacent mines around a revealed cell
+	 * are flagged (perfect flag placement).
 	 *
-	 * Имеет смысл только при countFlags=true.
+	 * Only meaningful when countFlags=true.
 	 */
 	requireFlagsForChord?: boolean
 	/**
-	 * Защита от слишком долгой симуляции.
+	 * Maximum number of simulation steps to prevent excessive computation.
 	 */
 	maxSteps?: number
 	/**
-	 * При очень больших полях симуляция может быть дорогой — используем быстрый фоллбек.
+	 * For very large fields, simulation can be expensive. This threshold triggers
+	 * a fast fallback estimation method.
 	 */
 	largeFieldFallbackThreshold?: number
 }
 
 /**
- * "Идеальный" (эталонный) анализатор для расчёта эффективности прохождения.
+ * Ideal (reference) solver for calculating solving efficiency metrics.
  *
- * Важно: это не "играющий бот". Он оценивает минимально необходимое число
- * левых кликов исходя из полной разметки поля (мины уже известны в `data`).
+ * Important: This is not a "playing bot". It estimates the minimum required number
+ * of left clicks based on complete field knowledge (mines are already known in `data`).
  */
 export class IdealSolver {
 	private field: BaseField<SimpleCell>
 	private options: Required<IdealSolverOptions>
 
+	/**
+	 * Creates a new ideal solver instance.
+	 * @param config - Field configuration including parameters, type, and cell data
+	 * @param options - Optional solver behavior configuration
+	 */
 	constructor(config: FactoryConfig, options?: IdealSolverOptions) {
 		this.field = FieldFactory.create(config)
 		this.options = {
@@ -58,6 +70,10 @@ export class IdealSolver {
 		}
 	}
 
+	/**
+	 * Calculates ideal solve metrics for the current field state.
+	 * @returns IdealSolveMetrics containing total and remaining click estimates
+	 */
 	public getMetrics(): IdealSolveMetrics {
 		const remaining = this.calculateRemainingWithChords()
 		// total "из текущего состояния" = remaining; полный total обычно фиксируется
@@ -66,14 +82,14 @@ export class IdealSolver {
 	}
 
 	/**
-	 * Оценивает минимум кликов через симуляцию "идеального" раскрытия.
+	 * Estimates minimum clicks through simulation of "ideal" revelation.
 	 *
-	 * Модель действий (все считаются как 1 левый клик):
-	 * - click: клик по закрытой безопасной клетке -> раскрывает `getAreaToReveal`
-	 * - chord: клик по уже открытой клетке -> раскрывает все её соседние закрытые безопасные клетки
-	 *          (и их области через `getAreaToReveal`), как в движке при аккорде.
+	 * Action model (all counted as 1 left click):
+	 * - click: click on closed safe cell -> reveals `getAreaToReveal`
+	 * - chord: click on already revealed cell -> reveals all its adjacent closed safe cells
+	 *          (and their areas via `getAreaToReveal`), as in the engine's chord behavior.
 	 *
-	 * Важно: флаги здесь не считаются отдельными кликами (предполагаем идеальную разметку мин).
+	 * Important: flags are not counted as separate clicks here (assumes ideal mine marking).
 	 */
 	private calculateRemainingWithChords(): number {
 		const allCells = this.field.grid.flat()
@@ -214,8 +230,8 @@ export class IdealSolver {
 	}
 
 	/**
-	 * Быстрая оценка остатка без учёта аккордов (аналог 3BV-остатка).
-	 * Используется как фоллбек для больших полей/лимита итераций.
+	 * Fast estimation of remaining clicks without accounting for chords (analogous to 3BV-remaining).
+	 * Used as a fallback for large fields or iteration limits.
 	 */
 	private estimateRemainingWithoutChords3BV(): number {
 		const allCells = this.field.grid.flat()
