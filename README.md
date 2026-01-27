@@ -16,6 +16,48 @@ A lightweight, dependency-free, and platform-agnostic Minesweeper game engine wr
 -  **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
 -  **Written in TypeScript**: Strong typing for a predictable and robust developer experience.
 
+## Grid Schemes
+
+### Hexagonal field (even-q vertical layout)
+
+The hex grid is stored as a regular `rows x cols` array. Columns are aligned; even columns are shifted down by half a cell (even-q). Neighbor offsets depend on column parity:
+
+```text
+even col (col % 2 === 0)
+(+1,0) (+1,-1) (0,-1) (-1,-1) (-1,0) (0,+1)
+
+odd col (col % 2 === 1)
+(+1,0) (0,-1) (-1,0) (-1,+1) (0,+1) (+1,+1)
+```
+
+Minimal layout sketch (rows increase downward, cols to the right):
+
+```text
+col: 0   1   2
+r0:  o   o   o
+r1:    o   o   o
+r2:  o   o   o
+```
+
+![Hexagonal grid (even-q vertical layout)](./docs/assets/hex-grid-even-q.png)
+
+### Triangular field (vertex-adjacent neighbors)
+
+The grid is still stored as a `rows x cols` array. Orientation is based on parity: `(row + col) % 2 === 0` points up. Neighbors include any triangle that shares at least one vertex, so each cell can have up to 12 neighbors (3 edge + 9 vertex).
+
+Edge neighbors by orientation:
+-  up (^): `(row - 1, col - 1)`, `(row - 1, col + 1)`, `(row + 1, col)`
+-  down (v): `(row + 1, col - 1)`, `(row + 1, col + 1)`, `(row - 1, col)`
+
+Layout sketch:
+
+```text
+r0: /\  \/  /\  \/
+r1: \/  /\  \/  /\
+```
+
+![Triangular grid (vertex-adjacent neighbors)](./docs/assets/triangular-grid-vertex.png)
+
 ## 📦 Installation
 
 ```bash
