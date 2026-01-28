@@ -7,14 +7,14 @@ A lightweight, dependency-free, and platform-agnostic Minesweeper game engine wr
 
 ## ✨ Features
 
--  **Clean Architecture**: Fully decoupled logic for the game board (`Field`), game rules (`MinesweeperEngine`), and AI analysis (`MinesweeperSolver`).
--  **Immutable State Management**: Actions like `revealCell` or `toggleFlag` don't mutate the game state directly. Instead, they return the resulting state and an `apply` function, making it perfect for UI frameworks like React or Vue.
--  **Isomorphic / Universal**: Zero dependencies on browser or Node.js APIs. Use it anywhere JavaScript runs.
--  **Built-in Solver**: Includes a solver that can determine certain mines and safe cells, with a foundation for more advanced probabilistic analysis.
--  **Ideal Metrics Solver**: Includes an "ideal" solver to estimate minimal click count for a given fully-mined field (useful for score/efficiency metrics).
--  **Multiple Field Types**: Support for square, hexagonal, and triangular field shapes.
--  **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
--  **Written in TypeScript**: Strong typing for a predictable and robust developer experience.
+- **Clean Architecture**: Fully decoupled logic for the game board (`Field`), game rules (`MinesweeperEngine`), and AI analysis (`MinesweeperSolver`).
+- **Immutable State Management**: Actions like `revealCell` or `toggleFlag` don't mutate the game state directly. Instead, they return the resulting state and an `apply` function, making it perfect for UI frameworks like React or Vue.
+- **Isomorphic / Universal**: Zero dependencies on browser or Node.js APIs. Use it anywhere JavaScript runs.
+- **Built-in Solver**: Includes a solver that can determine certain mines and safe cells, with a foundation for more advanced probabilistic analysis.
+- **Ideal Metrics Solver**: Includes an "ideal" solver to estimate minimal click count for a given fully-mined field (useful for score/efficiency metrics).
+- **Multiple Field Types**: Support for square, hexagonal, and triangular field shapes.
+- **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
+- **Written in TypeScript**: Strong typing for a predictable and robust developer experience.
 
 ## Grid Schemes
 
@@ -46,8 +46,9 @@ r2:  o   o   o
 The grid is still stored as a `rows x cols` array. Orientation is based on parity: `(row + col) % 2 === 0` points up. Neighbors include any triangle that shares at least one vertex, so each cell can have up to 12 neighbors (3 edge + 9 vertex).
 
 Edge neighbors by orientation:
--  up (^): `(row - 1, col - 1)`, `(row - 1, col + 1)`, `(row + 1, col)`
--  down (v): `(row + 1, col - 1)`, `(row + 1, col + 1)`, `(row - 1, col)`
+
+- up (^): `(row - 1, col - 1)`, `(row - 1, col + 1)`, `(row + 1, col)`
+- down (v): `(row + 1, col - 1)`, `(row + 1, col + 1)`, `(row - 1, col)`
 
 Layout sketch:
 
@@ -121,25 +122,25 @@ The main class for managing the game flow.
 
 Creates a new game instance.
 
--  `config`: `MineSweeperConfig`
-   -  `type`: The shape of the field. Supports `'square'`, `'hexagonal'`, or `'triangle'`.
-   -  `params`: `GameParams` (`rows`, `cols`, `mines`).
-   -  `mode?`: Game mode - `'guessing'` (default) or `'no-guessing'` (reduces "guessing" outcomes by preferring a flag action in some guessing states).
-   -  `rng?`: An optional Random Number Generator function (`() => number`) for deterministic testing. Defaults to `Math.random`.
+- `config`: `MineSweeperConfig`
+   - `type`: The shape of the field. Supports `'square'`, `'hexagonal'`, or `'triangle'`.
+   - `params`: `GameParams` (`rows`, `cols`, `mines`).
+   - `mode?`: Game mode - `'guessing'` (default) or `'no-guessing'` (reduces "guessing" outcomes by preferring a flag action in some guessing states).
+   - `rng?`: An optional Random Number Generator function (`() => number`) for deterministic testing. Defaults to `Math.random`.
 
 #### `engine.revealCell(position)`
 
 Generates an action to reveal a cell.
 
--  `position`: `{ row: number, col: number }`
--  Returns: `ActionResult`
+- `position`: `{ row: number, col: number }`
+- Returns: `ActionResult`
 
 #### `engine.toggleFlag(position)`
 
 Generates an action to toggle a flag on a cell.
 
--  `position`: `{ row: number, col: number }`
--  Returns: `ActionResult`
+- `position`: `{ row: number, col: number }`
+- Returns: `ActionResult`
 
 #### `engine.gameSnapshot` (getter)
 
@@ -149,10 +150,10 @@ A getter that returns a complete snapshot of the current game state, including t
 
 The object returned by action methods. It follows a command pattern, allowing you to preview changes before applying them.
 
--  `data`:
-   -  `actionSnapshot`: A full `GameSnapshot` of what the state will be _after_ the action is applied.
-   -  `actionChanges`: An `ActionChanges` object containing arrays of cells that were specifically affected by the action (e.g., `revealedCells`, `explodedCells`). This is ideal for fine-grained UI updates.
--  `apply`: A function `() => void` that, when called, commits the action and updates the internal state of the `MinesweeperEngine` instance.
+- `data`:
+   - `actionSnapshot`: A full `GameSnapshot` of what the state will be _after_ the action is applied.
+   - `actionChanges`: An `ActionChanges` object containing arrays of cells that were specifically affected by the action (e.g., `revealedCells`, `explodedCells`). This is ideal for fine-grained UI updates.
+- `apply`: A function `() => void` that, when called, commits the action and updates the internal state of the `MinesweeperEngine` instance.
 
 ### `MinesweeperSolver`
 
@@ -220,11 +221,97 @@ const engine = new MinesweeperEngine({
 // Every game created with this seed will have the exact same mine layout.
 ```
 
+### Custom Geometry (odd-q hex example)
+
+If you need a custom grid, implement `FieldGeometry` and pass `geometry` instead of `type`.
+The built-in `HexagonalGeometry` uses even-q vertical layout (even columns shifted down).
+The opposite layout is odd-q: odd columns are shifted down.
+
+```typescript
+import type {
+	FieldGeometry,
+	GameParams,
+	Position,
+} from '@maxxam0n/minesweeper-engine'
+import {
+	MinesweeperEngine,
+	MinesweeperSolver,
+} from '@maxxam0n/minesweeper-engine'
+
+class OddQHexagonalGeometry implements FieldGeometry {
+	constructor(public readonly params: GameParams) {}
+
+	public isInBoundary({ row, col }: Position): boolean {
+		return (
+			col >= 0 &&
+			row >= 0 &&
+			col < this.params.cols &&
+			row < this.params.rows
+		)
+	}
+
+	public getSiblings({ row, col }: Position): Position[] {
+		const shiftedOffsets = [
+			{ dx: +1, dy: 0 },
+			{ dx: +1, dy: -1 },
+			{ dx: 0, dy: -1 },
+			{ dx: -1, dy: -1 },
+			{ dx: -1, dy: 0 },
+			{ dx: 0, dy: +1 },
+		]
+
+		const unshiftedOffsets = [
+			{ dx: +1, dy: 0 },
+			{ dx: 0, dy: -1 },
+			{ dx: -1, dy: 0 },
+			{ dx: -1, dy: +1 },
+			{ dx: 0, dy: +1 },
+			{ dx: +1, dy: +1 },
+		]
+
+		const offsets = col % 2 === 1 ? shiftedOffsets : unshiftedOffsets
+		const siblings: Position[] = []
+
+		for (const { dx, dy } of offsets) {
+			const pos = { col: col + dx, row: row + dy }
+			if (this.isInBoundary(pos)) siblings.push(pos)
+		}
+
+		return siblings
+	}
+
+	public getAllPositions(): Position[] {
+		const result: Position[] = []
+		for (let row = 0; row < this.params.rows; row++) {
+			for (let col = 0; col < this.params.cols; col++) {
+				const pos = { row, col }
+				if (this.isInBoundary(pos)) result.push(pos)
+			}
+		}
+		return result
+	}
+}
+
+const params = { rows: 10, cols: 10, mines: 15 }
+const geometry = new OddQHexagonalGeometry(params)
+
+const engine = new MinesweeperEngine({
+	geometry,
+	params,
+})
+
+const solver = new MinesweeperSolver({
+	geometry,
+	params,
+	data: engine.gameSnapshot.field,
+})
+```
+
 ## 🗺️ Roadmap
 
 This project is actively maintained. Future plans include:
 
--  [ ] **Advanced Solver Logic**: Implementing probabilistic models and set-based analysis for situations that require guessing.
+- [ ] **Advanced Solver Logic**: Implementing probabilistic models and set-based analysis for situations that require guessing.
 
 ## 🤝 Contributing
 
