@@ -1,11 +1,15 @@
+import type { Cell } from './Cell'
+
 /**
  * Game configuration parameters defining the field dimensions and mine count.
  */
 export type GameParams = {
 	/** Number of columns in the field */
 	cols: number
+
 	/** Number of rows in the field */
 	rows: number
+
 	/** Total number of mines to place on the field */
 	mines: number
 }
@@ -16,6 +20,7 @@ export type GameParams = {
 export type Position = {
 	/** Column index (0-based) */
 	col: number
+
 	/** Row index (0-based) */
 	row: number
 }
@@ -43,27 +48,41 @@ export type GameMode = 'no-guessing' | 'guessing'
 export interface CellData {
 	/** Unique identifier for the cell */
 	key: string
+
 	/** Cell position coordinates */
 	position: Position
+
 	/** Whether this cell contains a mine */
 	isMine: boolean
+
 	/** Number of adjacent cells containing mines */
 	adjacentMines: number
+
 	/** Whether this cell is a mine that was not flagged (used for end-game analysis) */
 	notFoundMine: boolean
+
 	/** Whether this cell has been revealed */
 	isRevealed: boolean
+
 	/** Whether this cell has been flagged as a potential mine */
 	isFlagged: boolean
+
 	/** Whether this cell is empty (no adjacent mines) */
 	isEmpty: boolean
+
 	/** Whether this cell exploded (mine was revealed) */
 	isExploded: boolean
+
 	/** Whether this cell was a mine that was missed (flagged incorrectly) */
 	isMissed: boolean
+
 	/** Whether this cell is untouched (not revealed and not flagged) */
 	isUntouched: boolean
 }
+
+export type FieldCellGrid = Array<Array<Cell | null>>
+
+export type FieldGrid = Array<Array<CellData | null>>
 
 /**
  * Mine probability calculation result for a specific cell position.
@@ -71,6 +90,7 @@ export interface CellData {
 export interface MineProbability {
 	/** Probability value between 0 and 1 (0 = safe, 1 = definitely a mine) */
 	value: number
+
 	/** Position of the cell this probability applies to */
 	position: Position
 }
@@ -80,17 +100,23 @@ export interface MineProbability {
  */
 export interface FieldState {
 	/** Two-dimensional array of all cells organized by rows */
-	field: CellData[][]
+	field: FieldGrid
+
 	/** All cells that contain mines */
 	minedCells: CellData[]
+
 	/** All cells that exploded (mines that were revealed) */
 	explodedCells: CellData[]
+
 	/** All cells that are currently flagged */
 	flaggedCells: CellData[]
+
 	/** All mines that were not flagged (used for end-game analysis) */
 	notFoundMines: CellData[]
+
 	/** All cells that were incorrectly flagged (flags on non-mine cells) */
 	errorFlags: CellData[]
+
 	/** All cells that have been revealed */
 	revealedCells: CellData[]
 }
@@ -98,21 +124,53 @@ export interface FieldState {
 /**
  * Properties for constructing a cell, with position being required.
  */
-export interface ConstructorCellProps extends Partial<CellData> {
-	/** Required cell position */
+export interface ConstructorCellProps {
+	/** Cell position coordinates */
 	position: Position
+
+	/** Number of adjacent cells containing mines */
+	adjacentMines?: number
+
+	/** Whether this cell has been flagged as a potential mine */
+	isFlagged?: boolean
+
+	/** Whether this cell contains a mine */
+	isMine?: boolean
+
+	/** Whether this cell has been revealed */
+	isRevealed?: boolean
+}
+
+/**
+ * Geometry interface defining field boundary checks and cell adjacency calculations.
+ * Provides methods to validate positions and retrieve neighboring cells based on the field's grid type.
+ */
+export interface FieldGeometry {
+	/** Check if a position is within the field boundaries */
+	isInBoundary({ row, col }: Position): boolean
+
+	/** Get the siblings of a cell */
+	getSiblings(pos: Position): Position[]
+
+	/** Optional optimized list of all valid positions */
+	getAllPositions?(): Position[]
 }
 
 /**
  * Properties for constructing a field instance.
  */
-export interface ConstrutorFieldProps {
+export interface ConstructorFieldProps {
 	/** Game parameters (dimensions and mine count) */
 	params: GameParams
+
+	/** Field geometry */
+	geometry: FieldGeometry
+
 	/** Optional random number generator function (0-1 range). If not provided, uses Math.random */
 	rng?: () => number
+
 	/** Optional pre-existing cell data to initialize the field with */
-	data?: CellData[][]
+	data?: FieldGrid
 }
 
 /**
@@ -129,14 +187,19 @@ export interface GameSnapshot extends FieldState {
 export interface ActionChanges {
 	/** The target cell that was acted upon */
 	target: CellData
+
 	/** All cells that were affected by this action */
 	handledCells: CellData[]
+
 	/** Cells that were flagged in this action */
 	flaggedCells: CellData[]
+
 	/** Cells that had flags removed in this action */
 	unflaggedCells: CellData[]
+
 	/** Cells that were revealed in this action */
 	revealedCells: CellData[]
+
 	/** Cells that exploded (mines that were revealed) in this action */
 	explodedCells: CellData[]
 }
@@ -147,10 +210,12 @@ export interface ActionChanges {
 export interface ActionResult {
 	/** Function to apply the action changes to the game engine state */
 	apply: () => void
+
 	/** Action result data */
 	data: {
 		/** Snapshot of the game state after this action */
 		actionSnapshot: GameSnapshot
+
 		/** Detailed changes made by this action */
 		actionChanges: ActionChanges
 	}
@@ -159,21 +224,24 @@ export interface ActionResult {
 /**
  * Configuration for creating a field instance.
  */
-export interface FactoryConfig {
-	/** Game parameters (dimensions and mine count) */
-	params: GameParams
+export interface GeometryFactoryConfig {
 	/** Type of field grid to create */
 	type: FieldType
-	/** Optional random number generator function (0-1 range). If not provided, uses Math.random */
-	rng?: () => number
-	/** Optional pre-existing cell data to initialize the field with */
-	data?: CellData[][]
+
+	/** Game configuration parameters defining the field dimensions and mine count. */
+	params: GameParams
+}
+
+type BaseMinesweeperConfig = Omit<ConstructorFieldProps, 'geometry'> & {
+	/** Game mode determining whether guessing is allowed */
+	mode?: GameMode
 }
 
 /**
  * Complete configuration for creating a minesweeper game engine instance.
  */
-export interface MineSweeperConfig extends FactoryConfig {
-	/** Game mode determining whether guessing is allowed */
-	mode?: GameMode
-}
+export type MineSweeperConfig = BaseMinesweeperConfig &
+	(
+		| { geometry?: never; type: FieldType }
+		| { type?: never; geometry: FieldGeometry }
+	)

@@ -1,30 +1,14 @@
 import { createKey } from '../lib/utils'
 
-import type { CellData, ConstructorCellProps, Position } from './types'
+import type { CellData, ConstructorCellProps } from './types'
 
-export class SimpleCell implements CellData {
+export class Cell {
 	public readonly key: string
-	public readonly position: Position
+	public readonly position: ConstructorCellProps['position']
 	public isMine: boolean
 	public isRevealed: boolean
 	public isFlagged: boolean
 	public adjacentMines: number
-
-	static createEmpty(pos: Position): CellData {
-		return {
-			key: `empty-${createKey(pos)}`,
-			position: pos,
-			isMine: false,
-			adjacentMines: 0,
-			notFoundMine: false,
-			isRevealed: false,
-			isFlagged: false,
-			isEmpty: false,
-			isExploded: false,
-			isMissed: false,
-			isUntouched: true,
-		}
-	}
 
 	constructor({
 		position,
@@ -33,42 +17,61 @@ export class SimpleCell implements CellData {
 		isMine = false,
 		isRevealed = false,
 	}: ConstructorCellProps) {
-		this.key = createKey(position)
 		this.position = position
+		this.key = createKey(position)
 		this.isMine = isMine
 		this.isRevealed = isRevealed
 		this.isFlagged = isFlagged
 		this.adjacentMines = adjacentMines
 	}
 
-	public get isEmpty() {
+	get isEmpty(): boolean {
 		return !this.isMine && this.adjacentMines === 0
 	}
 
-	public get isExploded() {
+	get isExploded(): boolean {
 		return this.isMine && this.isRevealed
 	}
 
-	public get isMissed() {
+	get isMissed(): boolean {
 		return this.isFlagged && !this.isMine
 	}
 
-	public get notFoundMine() {
+	get notFoundMine(): boolean {
 		return this.isMine && !this.isFlagged
 	}
 
-	public get isUntouched() {
+	get isUntouched(): boolean {
 		return !this.isRevealed && !this.isFlagged
 	}
 
-	public getData(): CellData {
+	static createCell(props: ConstructorCellProps): Cell {
+		return new Cell(props)
+	}
+
+	clone(): Cell {
+		return new Cell({
+			position: { ...this.position },
+			adjacentMines: this.adjacentMines,
+			isFlagged: this.isFlagged,
+			isMine: this.isMine,
+			isRevealed: this.isRevealed,
+		})
+	}
+
+	toData(): CellData {
 		return {
-			...this,
+			key: this.key,
+			position: { ...this.position },
+			isMine: this.isMine,
+			isRevealed: this.isRevealed,
+			isFlagged: this.isFlagged,
+			adjacentMines: this.adjacentMines,
 			isEmpty: this.isEmpty,
 			isExploded: this.isExploded,
+			isMissed: this.isMissed,
 			notFoundMine: this.notFoundMine,
 			isUntouched: this.isUntouched,
-			isMissed: this.isMissed,
 		}
 	}
 }
