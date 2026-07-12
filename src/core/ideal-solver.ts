@@ -43,11 +43,26 @@ export class IdealSolver {
 
 	/**
 	 * Calculates ideal solve metrics for the current field state.
-	 * @returns IdealSolveMetrics containing total and remaining click estimates
+	 * - `remaining` — оценка кликов от текущего прогресса до конца
+	 * - `total` — оценка кликов с «чистого» поля (все safe-клетки закрыты)
 	 */
 	public getMetrics(): IdealSolveMetrics {
-		const remaining = this.calculateRemainingWithChords()
-		return { total: remaining, remaining }
+		const remainingField = this.field.cloneSelf()
+		const remaining = this.calculateRemainingWithChords(remainingField)
+
+		const totalField = this.field.cloneSelf()
+		IdealSolver.resetProgress(totalField)
+		const total = this.calculateRemainingWithChords(totalField)
+
+		return { total, remaining }
+	}
+
+	private static resetProgress(field: Field): void {
+		for (const cell of field.grid.flat()) {
+			if (!cell) continue
+			cell.isRevealed = false
+			cell.isFlagged = false
+		}
 	}
 
 	/**
@@ -60,26 +75,25 @@ export class IdealSolver {
 	 *
 	 * Important: flags are not counted as separate clicks here (assumes ideal mine marking).
 	 */
-	private calculateRemainingWithChords(): number {
-		const allCells = this.field.grid
+	private calculateRemainingWithChords(field: Field): number {
+		const allCells = field.grid
 			.flat()
 			.filter((cell): cell is Cell => cell !== null)
 
 		// Fast fallback for very large fields to avoid performance issues
 		if (allCells.length >= this.options.largeFieldFallbackThreshold) {
-			return this.estimateRemainingWithoutChords3BV()
+			return this.estimateRemainingWithoutChords3BV(field)
 		}
 
 		const byKey = new Map<string, Cell>()
 		for (const c of allCells) byKey.set(c.key, c)
 
 		// Cache of reveal areas for each cell click (fixed based on mine layout)
-		// This avoids recalculating getAreaToReveal for the same cell multiple times
 		const areaCache = new Map<string, string[]>()
 		const getAreaKeys = (cell: Cell): string[] => {
 			const cached = areaCache.get(cell.key)
 			if (cached) return cached
-			const area = this.field.getAreaToReveal(cell.position)
+			const area = field.getAreaToReveal(cell.position)
 			const keys = area.filter(a => !a.isMine).map(a => a.key)
 			areaCache.set(cell.key, keys)
 			return keys
@@ -91,12 +105,9 @@ export class IdealSolver {
 
 		let clicks = 0
 
-		// Greedy algorithm: at each step, choose the action (chord or click) that reveals
-		// the most new safe cells per click cost, maximizing efficiency
 		while (remainingSafe > 0) {
 			if (clicks >= this.options.maxSteps) {
-				// Safety fallback to prevent infinite loops: return a coarser estimate
-				return clicks + this.estimateRemainingWithoutChords3BV()
+				return clicks + this.estimateRemainingWithoutChords3BV(field)
 			}
 
 			let bestNew = 0
@@ -104,13 +115,10 @@ export class IdealSolver {
 			let bestCost = 1
 			let bestFlagsToSet: string[] | null = null
 
-			// 1) Find the best chord from currently revealed cells
-			// A chord is clicking on a revealed cell to reveal all adjacent safe cells
-			// We evaluate all possible chords and pick the one with best efficiency (new cells / cost)
 			for (const cell of allCells) {
 				if (cell.isMine || !cell.isRevealed) continue
 
-				const neighbors = this.field.getSiblings(cell.position)
+				const neighbors = field.getSiblings(cell.position)
 				const unopenedSafeNeighbors = neighbors.filter(
 					n => !n.isMine && !n.isRevealed,
 				)
@@ -119,7 +127,6 @@ export class IdealSolver {
 				let flagsToSet: string[] = []
 				let chordCost = 1
 
-				// In flag-counting mode, we may need to set flags before chording
 				if (this.options.countFlags && this.options.requireFlagsForChord) {
 					const mineNeighbors = neighbors.filter(n => n.isMine)
 					flagsToSet = mineNeighbors
@@ -128,24 +135,20 @@ export class IdealSolver {
 					chordCost = 1 + flagsToSet.length
 				}
 
-				// Calculate union of all areas that would be revealed by this chord
 				const union = new Set<string>()
 				for (const n of unopenedSafeNeighbors) {
 					for (const k of getAreaKeys(n)) union.add(k)
 				}
 
-				// Count how many new safe cells would be revealed
 				let newly = 0
 				for (const k of union) {
 					const target = byKey.get(k)
 					if (target && !target.isMine && !target.isRevealed) newly++
 				}
 
-				// Score is efficiency: new cells per cost
 				const score = newly / chordCost
 				const bestScore = bestNew / bestCost
 
-				// Update best if this chord is more efficient, or equally efficient but reveals more
 				if (
 					score > bestScore ||
 					(score === bestScore &&
@@ -159,9 +162,6 @@ export class IdealSolver {
 				}
 			}
 
-			// 2) Find the best regular click on a closed safe cell
-			// This evaluates direct clicks that reveal areas of cells
-			// Compare with chords to find the globally optimal action
 			for (const cell of allCells) {
 				if (cell.isMine || cell.isRevealed) continue
 
@@ -176,7 +176,6 @@ export class IdealSolver {
 				const score = newly / cost
 				const bestScore = bestNew / bestCost
 
-				// Update best if this click is more efficient
 				if (
 					score > bestScore ||
 					(score === bestScore &&
@@ -189,7 +188,6 @@ export class IdealSolver {
 				}
 			}
 
-			// Safety fallback: if no valid action found, pick any unrevealed safe cell
 			if (!bestKeys || bestNew === 0) {
 				const any = allCells.find(c => !c.isMine && !c.isRevealed)
 				if (!any) break
@@ -198,7 +196,6 @@ export class IdealSolver {
 				bestFlagsToSet = null
 			}
 
-			// If a chord was selected in flag-counting mode, set flags first
 			if (this.options.countFlags && bestFlagsToSet?.length) {
 				for (const mineKey of bestFlagsToSet) {
 					const mine = byKey.get(mineKey)
@@ -206,7 +203,6 @@ export class IdealSolver {
 				}
 			}
 
-			// Apply the selected action: reveal all cells from bestKeys
 			for (const k of bestKeys) {
 				const target = byKey.get(k)
 				if (!target || target.isMine || target.isRevealed) continue
@@ -224,13 +220,11 @@ export class IdealSolver {
 	 * Fast estimation of remaining clicks without accounting for chords (analogous to 3BV-remaining).
 	 * Used as a fallback for large fields or iteration limits.
 	 */
-	private estimateRemainingWithoutChords3BV(): number {
-		const allCells = this.field.grid
+	private estimateRemainingWithoutChords3BV(field: Field): number {
+		const allCells = field.grid
 			.flat()
 			.filter((cell): cell is Cell => cell !== null)
 
-		// Count connected components of empty (zero) cells that haven't been revealed
-		// Each unrevealed zero component requires at least one click
 		const visitedZero = new Set<string>()
 		let zeroComponentsRemaining = 0
 
@@ -242,12 +236,11 @@ export class IdealSolver {
 			const queue: Cell[] = [cell]
 			visitedZero.add(cell.key)
 
-			// BFS to find all connected zero cells in this component
 			while (queue.length) {
 				const cur = queue.pop()!
 				if (!cur.isRevealed) componentHasUnrevealed = true
 
-				const zeroNeighbors = this.field
+				const zeroNeighbors = field
 					.getSiblings(cur.position)
 					.filter(n => !n.isMine && n.isEmpty)
 
@@ -261,15 +254,13 @@ export class IdealSolver {
 			if (componentHasUnrevealed) zeroComponentsRemaining++
 		}
 
-		// Count isolated number cells (not adjacent to any zero cell)
-		// These require individual clicks as they can't be revealed via zero-area expansion
 		let isolatedNumbersRemaining = 0
 		for (const cell of allCells) {
 			if (cell.isMine) continue
 			if (cell.isEmpty) continue
 			if (cell.isRevealed) continue
 
-			const hasZeroNeighbor = this.field
+			const hasZeroNeighbor = field
 				.getSiblings(cell.position)
 				.some(n => !n.isMine && n.isEmpty)
 
