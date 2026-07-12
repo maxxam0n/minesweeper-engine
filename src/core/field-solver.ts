@@ -51,14 +51,14 @@ export class Solver {
 	public solve(): MineProbability[] {
 		const fieldState = this.field.getFieldSnapshot()
 		this.probabilities.clear()
+		this.regionEnumerator.clearCache()
 
 		// Iteratively apply inference rules until no more updates are possible
 		// Each rule may enable further inferences, so we loop until convergence
 		let updated: boolean
 		do {
-			// First, try simple direct inference: if a number cell has exactly N mines
-			// and N closed neighbors, all are mines. If it has N mines already flagged,
-			// all remaining closed neighbors are safe.
+			// Direct inference: certain mines / safe cells from revealed numbers
+			// and already known solver probabilities (player flags are not trusted).
 			updated =
 				this.directInference.inferCertainMines(fieldState.revealedCells) ||
 				this.directInference.inferCertainSafeCells(fieldState.revealedCells)

@@ -45,7 +45,8 @@ export class DirectInference {
 
 	/**
 	 * Infers certain safe cells: if a number cell already has all its required mines
-	 * flagged/identified among closed neighbors, all remaining closed neighbors are safe.
+	 * identified among closed neighbors (via solver probabilities, not player flags),
+	 * all remaining closed neighbors are safe.
 	 */
 	public inferCertainSafeCells(cells: CellData[]): boolean {
 		let updated = false

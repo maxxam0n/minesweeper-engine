@@ -31,4 +31,24 @@ describe('Solver.solve', () => {
 
 		expect(mineProb?.value).toBe(1)
 	})
+
+	it('does not treat a wrong player flag as a known mine', () => {
+		const params = { rows: 5, cols: 5, mines: 1 }
+		const geometry = new SquareGeometry(params)
+		const mines = [{ row: 0, col: 0 }]
+		const revealed = [{ row: 0, col: 1 }]
+		// Ошибочный флаг на безопасной клетке — solver не должен считать её миной
+		const flagged = [{ row: 1, col: 1 }]
+
+		const grid = buildGrid(params, geometry, { mines, revealed, flagged })
+		const field = new Field({ params, geometry, data: grid })
+
+		const solver = new Solver(field)
+		const probabilities = solver.solve()
+		const flaggedProb = probabilities.find(
+			p => p.position.row === 1 && p.position.col === 1,
+		)
+
+		expect(flaggedProb?.value).not.toBe(1)
+	})
 })

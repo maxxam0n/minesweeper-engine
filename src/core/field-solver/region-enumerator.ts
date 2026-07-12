@@ -7,13 +7,17 @@ import { ProbabilityStore } from './probability-store'
 const MAX_FULL_ENUM_VARS = 18
 const MAX_LOOKAHEAD_VARS = 30
 
+type EnumerationResult = { total: number; counts: number[] }
+
 export class RegionEnumerator {
-	private static enumerationCache = new Map<
-		string,
-		{ total: number; counts: number[] }
-	>()
+	/** Кэш в рамках одного solve()-прохода; не живёт между партиями/инстансами. */
+	private readonly enumerationCache = new Map<string, EnumerationResult>()
 
 	constructor(private readonly probabilities: ProbabilityStore) {}
+
+	public clearCache(): void {
+		this.enumerationCache.clear()
+	}
 
 	/**
 	 * Evaluates a subregion by enumerating all valid mine configurations.
@@ -72,11 +76,10 @@ export class RegionEnumerator {
 			canonicalConstraints,
 		)
 
-		// Check cache to avoid re-enumerating identical constraint systems
-		let cached = RegionEnumerator.enumerationCache.get(key)
+		let cached = this.enumerationCache.get(key)
 		if (!cached) {
 			cached = this.bruteForce(canonicalVars.length, canonicalConstraints)
-			RegionEnumerator.enumerationCache.set(key, cached)
+			this.enumerationCache.set(key, cached)
 		}
 
 		// Map canonical results back to original variable order
@@ -262,12 +265,12 @@ export class RegionEnumerator {
 			newCons.push({ indices, mines })
 		}
 
-		// Check cache or enumerate to see if reduced system has solutions
 		const key = this.createConstraintsKey(varCount - 1, newCons)
-		const cached = RegionEnumerator.enumerationCache.get(key)
-		if (cached) return cached.total > 0
-
-		const result = this.bruteForce(varCount - 1, newCons)
-		return result.total > 0
+		let cached = this.enumerationCache.get(key)
+		if (!cached) {
+			cached = this.bruteForce(varCount - 1, newCons)
+			this.enumerationCache.set(key, cached)
+		}
+		return cached.total > 0
 	}
 }
