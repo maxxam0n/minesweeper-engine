@@ -47,7 +47,7 @@
 		"build": "vite build",
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix",
-		"test": "vitest run",
+		"test": "node scripts/run-vitest.mjs",
 		"type-check": "tsc --noEmit -p tsconfig.app.json",
 		"prepublishOnly": "npm run build"
 	},
