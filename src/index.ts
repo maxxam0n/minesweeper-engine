@@ -22,10 +22,7 @@ export type {
 } from './model/analyzer.types'
 export type { BoardEditorConfig } from './model/board-editor.types'
 export type { FieldView, SolverConfig } from './model/field-solver.types'
-export type {
-	IdealSolveMetrics,
-	IdealSolverOptions,
-} from './model/ideal-solver.types'
+export type { IdealSolveMetrics } from './model/ideal-solver.types'
 export type {
 	SolvableBoardGenerateConfig,
 	SolvableBoardResult,

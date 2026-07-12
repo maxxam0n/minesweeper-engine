@@ -11,7 +11,7 @@ A lightweight, dependency-free, and platform-agnostic Minesweeper game engine wr
 - **Immutable State Management**: Actions like `revealCell` or `toggleFlag` don't mutate the game state directly. Instead, they return the resulting state and an `apply` function, making it perfect for UI frameworks like React or Vue.
 - **Isomorphic / Universal**: Zero dependencies on browser or Node.js APIs. Use it anywhere JavaScript runs.
 - **Built-in Solver**: Includes a solver that can determine certain mines and safe cells, with a foundation for more advanced probabilistic analysis.
-- **Ideal Metrics Solver**: Includes an "ideal" solver to estimate minimal click count for a given fully-mined field (useful for score/efficiency metrics).
+- **Classic 3BV Metrics**: Computes Bechtel's Board Benchmark Value (and 3BV-remaining) for a fully-mined field — the standard baseline for efficiency / IOE.
 - **Multiple Field Types**: Support for square, hexagonal, and triangular field shapes.
 - **No-guessing boards**: Generate layouts that are fully solvable by the built-in analyzer from a chosen start cell, with optional progress callbacks.
 - **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
@@ -248,7 +248,9 @@ console.log(`Found ${safeMoves.length} guaranteed safe moves.`)
 
 ### `MinesweeperIdealSolver`
 
-Estimates minimal click count for a given field when the mine layout is already known in `data` (i.e., `isMine` is already populated — after the first reveal, or from your own pre-generated field).
+Computes classic **3BV** (Bechtel's Board Benchmark Value) when the mine layout is already known in `data` (`isMine` populated — after the first reveal, or from a pre-generated field).
+
+3BV is the minimum number of left clicks **without chording**: one click per opening + one click per numbered cell that does not touch an opening. Community efficiency / IOE is `3BV / clicks` (values above `1` require chords).
 
 ```typescript
 import { MinesweeperIdealSolver } from '@maxxam0n/minesweeper-engine'
@@ -259,9 +261,12 @@ const ideal = new MinesweeperIdealSolver({
 	data: engine.gameSnapshot.field,
 })
 
-const metrics = ideal.getMetrics()
-console.log(metrics.total) // ideal clicks from a pristine board
-console.log(metrics.remaining) // ideal clicks from the current progress
+const { total, remaining } = ideal.getMetrics()
+console.log(total) // 3BV from a pristine board
+console.log(remaining) // 3BV-remaining from current progress
+
+const ioe = MinesweeperIdealSolver.efficiency(total, playerClicks)
+console.log(ioe) // e.g. 1.25 → 125% efficiency
 ```
 
 ### `BoardEditor`
