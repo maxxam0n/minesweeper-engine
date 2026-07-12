@@ -8,14 +8,26 @@ export default defineConfig({
 			tsconfigPath: './tsconfig.app.json',
 			insertTypesEntry: true,
 			rollupTypes: true,
+			entryRoot: 'src',
 		}),
 	],
 	build: {
 		lib: {
-			entry: resolve(__dirname, 'src/index.ts'),
-			name: 'minesweeper-engine',
-			fileName: format =>
-				`minesweeper-engine.${format === 'es' ? 'es.js' : 'umd.cjs'}`,
+			entry: {
+				index: resolve(__dirname, 'src/index.ts'),
+				solver: resolve(__dirname, 'src/entries/solver.ts'),
+				geometry: resolve(__dirname, 'src/entries/geometry.ts'),
+			},
+			formats: ['es', 'cjs'],
+			fileName: (format, entryName) => {
+				const base = entryName === 'index' ? 'minesweeper-engine' : entryName
+				return format === 'es' ? `${base}.es.js` : `${base}.cjs`
+			},
+		},
+		rollupOptions: {
+			output: {
+				exports: 'named',
+			},
 		},
 	},
 })

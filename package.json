@@ -19,16 +19,27 @@
 	},
 	"license": "MIT",
 	"type": "module",
-	"main": "./dist/minesweeper-engine.umd.cjs",
+	"main": "./dist/minesweeper-engine.cjs",
 	"module": "./dist/minesweeper-engine.es.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
+			"types": "./dist/index.d.ts",
 			"import": "./dist/minesweeper-engine.es.js",
-			"require": "./dist/minesweeper-engine.umd.cjs",
-			"types": "./dist/index.d.ts"
+			"require": "./dist/minesweeper-engine.cjs"
+		},
+		"./solver": {
+			"types": "./dist/solver.d.ts",
+			"import": "./dist/solver.es.js",
+			"require": "./dist/solver.cjs"
+		},
+		"./geometry": {
+			"types": "./dist/geometry.d.ts",
+			"import": "./dist/geometry.es.js",
+			"require": "./dist/geometry.cjs"
 		}
 	},
+	"sideEffects": false,
 	"files": [
 		"dist"
 	],
