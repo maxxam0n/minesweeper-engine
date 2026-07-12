@@ -1,7 +1,5 @@
-import { createGrid, createKey } from '../../src/lib/utils'
-import { Cell } from '../../src/model/Cell'
+import { BoardEditor } from '../../src/model/board-editor'
 import type {
-	CellData,
 	FieldGeometry,
 	FieldGrid,
 	GameParams,
@@ -12,10 +10,6 @@ type GridOptions = {
 	mines?: Position[]
 	revealed?: Position[]
 	flagged?: Position[]
-}
-
-const toKeySet = (positions: Position[] | undefined) => {
-	return new Set((positions ?? []).map(createKey))
 }
 
 export const listPositions = (
@@ -32,42 +26,15 @@ export const listPositions = (
 	return result
 }
 
+/** Тестовый хелпер поверх публичного BoardEditor. */
 export const buildGrid = (
 	params: GameParams,
 	geometry: FieldGeometry,
 	{ mines, revealed, flagged }: GridOptions = {},
 ): FieldGrid => {
-	const mineSet = toKeySet(mines)
-	const revealedSet = toKeySet(revealed)
-	const flaggedSet = toKeySet(flagged)
-
-	const adjacent = createGrid<number>(params.rows, params.cols, () => 0)
-	;(mines ?? []).forEach(pos => {
-		for (const sibling of geometry.getSiblings(pos)) {
-			adjacent[sibling.row][sibling.col] += 1
-		}
-	})
-
-	return createGrid<FieldGrid[number][number]>(
-		params.rows,
-		params.cols,
-		pos => {
-			if (!geometry.isInBoundary(pos)) return null
-			const key = createKey(pos)
-			const isMine = mineSet.has(key)
-			const adjacentMines = adjacent[pos.row][pos.col]
-			const isRevealed = revealedSet.has(key)
-			const isFlagged = flaggedSet.has(key)
-
-			const cell: CellData = Cell.createCell({
-				position: pos,
-				isMine,
-				adjacentMines,
-				isRevealed,
-				isFlagged,
-			}).toData()
-
-			return cell
-		},
-	)
+	const editor = BoardEditor.create({ params, geometry })
+	if (mines?.length) editor.mine(mines)
+	if (revealed?.length) editor.reveal(revealed)
+	if (flagged?.length) editor.flag(flagged)
+	return editor.build()
 }

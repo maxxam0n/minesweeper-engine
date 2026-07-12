@@ -45,7 +45,9 @@ export class Field {
 		this.grid = data ? this.normalizeGrid(data) : this.createGrid()
 
 		this.rng = rng ?? Math.random
-		this.minesPlaced = this.grid.some(r => r.some(c => c?.isMine))
+		// `data` — готовая раскладка (редактор / persist / clone); RNG только для пустого поля
+		this.minesPlaced =
+			data != null || this.grid.some(r => r.some(c => c?.isMine))
 		this.placeMines()
 	}
 
@@ -157,8 +159,10 @@ export class Field {
 	}
 
 	/**
-	 * Places mines randomly across the field, avoiding the excluded position if provided.
-	 * @param excludedPos - Optional position to exclude from mine placement (typically the first click)
+	 * Places mines randomly across the field.
+	 * Optional `excludedPos` skips one cell (legacy deferred-placement helper).
+	 * The engine prefers early placement + `relocateMine` on first click instead.
+	 * @param excludedPos - Optional position to exclude from candidates
 	 */
 	private placeMines(excludedPos?: Position): void {
 		if (this.minesPlaced) return

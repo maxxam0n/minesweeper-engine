@@ -40,4 +40,15 @@ describe('Field.getAreaToReveal', () => {
 			minedCells.every(cell => allowedSet.has(createKey(cell.position))),
 		).toBe(true)
 	})
+
+	it('does not place random mines when data grid is provided', () => {
+		const params = { rows: 3, cols: 3, mines: 5 }
+		const geometry = new SquareGeometry(params)
+		const grid = buildGrid(params, geometry, {
+			mines: [{ row: 1, col: 1 }],
+		})
+
+		const field = new Field({ params, geometry, data: grid, rng: () => 0 })
+		expect(field.getFieldSnapshot().minedCells).toHaveLength(1)
+	})
 })
