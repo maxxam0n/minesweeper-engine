@@ -1,7 +1,6 @@
 import { createGrid, createKey, parseKey } from '../lib/utils'
 import { Cell } from './Cell'
 import { Field } from './Field'
-import { GeometryFactory } from './geometry/Factory'
 import type { BoardEditorConfig } from './board-editor.types'
 import type {
 	CellData,
@@ -31,10 +30,7 @@ export class BoardEditor {
 	}
 
 	public static create(config: BoardEditorConfig): BoardEditor {
-		const geometry =
-			config.geometry ??
-			GeometryFactory.create({ type: config.type, params: config.params })
-		return new BoardEditor(config.params, geometry)
+		return new BoardEditor(config.params, config.geometry)
 	}
 
 	/** Параметры с `mines` = фактическое число установленных мин. */

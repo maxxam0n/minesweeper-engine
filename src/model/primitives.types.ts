@@ -32,10 +32,3 @@ export type FieldType = 'square' | 'hexagonal' | 'triangle'
  * Current state of the game.
  */
 export type GameStatus = 'idle' | 'playing' | 'won' | 'lost'
-
-/**
- * Game mode determining whether guessing is allowed.
- * - `'no-guessing'`: Prevents moves that require guessing when solver detects uncertain states
- * - `'guessing'`: Allows any move, including those that require guessing
- */
-export type GameMode = 'no-guessing' | 'guessing'

@@ -1,4 +1,3 @@
-import type { CreateFieldAnalyzer } from './analyzer.types'
 import type { CellData, FieldGrid } from './cell.types'
 import type { FieldState } from './field-state.types'
 import type {
@@ -7,7 +6,6 @@ import type {
 } from './geometry.types'
 import type {
 	FieldType,
-	GameMode,
 	GameParams,
 	GameStatus,
 } from './primitives.types'
@@ -63,38 +61,30 @@ export interface ActionResult {
 export const PERSISTED_GAME_VERSION = 1 as const
 
 /**
- * Сериализуемое состояние партии (без RNG и custom geometry-инстанса).
- * Для custom geometry при restore нужно передать `geometry` в options.
+ * Сериализуемое состояние партии (без RNG и geometry-инстанса).
+ * При restore всегда передайте `geometry` в options
+ * (legacy-снимки с `type` могут восстановить geometry через GeometryFactory).
  */
 export type PersistedGameState = {
 	version: typeof PERSISTED_GAME_VERSION
 	params: GameParams
-	mode: GameMode
 	status: GameStatus
-	/** Встроенный тип поля; отсутствует, если использовалась custom geometry */
+	/** @deprecated legacy; новые снимки не пишут type */
 	type?: FieldType
+	/** @deprecated legacy; mode удалён из движка */
+	mode?: string
 	field: FieldGrid
 }
 
-type BaseMinesweeperConfig = Omit<ConstructorFieldProps, 'geometry'> & {
-	/** Game mode determining whether guessing is allowed */
-	mode?: GameMode
-
-	/**
-	 * Фабрика анализатора для режима `no-guessing`.
-	 * По умолчанию используется встроенный Solver.
-	 */
-	createAnalyzer?: CreateFieldAnalyzer
+/**
+ * Конфиг движка: geometry обязательна (встроенная через GeometryFactory или своя).
+ */
+export type MineSweeperConfig = Omit<
+	ConstructorFieldProps,
+	'excludeFromMines'
+> & {
+	geometry: FieldGeometry
 
 	/** Максимум записей undo-истории (по умолчанию 100) */
 	maxHistory?: number
 }
-
-/**
- * Complete configuration for creating a minesweeper game engine instance.
- */
-export type MineSweeperConfig = BaseMinesweeperConfig &
-	(
-		| { geometry?: never; type: FieldType }
-		| { type?: never; geometry: FieldGeometry }
-	)

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { GameEngine } from '../../src/core/game-engine'
 import { BoardEditor } from '../../src/model/board-editor'
+import { GeometryFactory } from '../../src/model/geometry/Factory'
+
+const square = (params: { rows: number; cols: number; mines: number }) =>
+	GeometryFactory.create({ type: 'square', params })
 
 describe('BoardEditor', () => {
 	it('builds a deterministic grid with mines, reveals and flags', () => {
+		const params = { rows: 5, cols: 5, mines: 0 }
 		const grid = BoardEditor.create({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 0 },
+			geometry: square(params),
+			params,
 		})
 			.mine({ row: 0, col: 0 })
 			.mine([
@@ -27,9 +32,10 @@ describe('BoardEditor', () => {
 	})
 
 	it('syncs gameParams.mines with placed mines and builds a Field', () => {
+		const params = { rows: 5, cols: 5, mines: 99 }
 		const editor = BoardEditor.create({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 99 },
+			geometry: square(params),
+			params,
 		}).mine([
 			{ row: 1, col: 1 },
 			{ row: 2, col: 2 },
@@ -42,19 +48,19 @@ describe('BoardEditor', () => {
 	})
 
 	it('throws on out-of-bounds positions', () => {
+		const params = { rows: 5, cols: 5, mines: 0 }
 		const editor = BoardEditor.create({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 0 },
+			geometry: square(params),
+			params,
 		})
 
 		expect(() => editor.mine({ row: 9, col: 0 })).toThrow(/out of bounds/)
 	})
 
 	it('produces data usable by GameEngine', () => {
-		const editor = BoardEditor.create({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 5 },
-		}).mine([
+		const params = { rows: 5, cols: 5, mines: 5 }
+		const geometry = square(params)
+		const editor = BoardEditor.create({ geometry, params }).mine([
 			{ row: 2, col: 0 },
 			{ row: 2, col: 1 },
 			{ row: 2, col: 2 },
@@ -63,7 +69,7 @@ describe('BoardEditor', () => {
 		])
 
 		const engine = new GameEngine({
-			type: 'square',
+			geometry,
 			params: editor.gameParams,
 			data: editor.build(),
 		})
@@ -74,13 +80,15 @@ describe('BoardEditor', () => {
 	})
 
 	it('does not RNG-fill mines when data is provided with params.mines > 0', () => {
-		const editor = BoardEditor.create({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 10 },
-		}).mine({ row: 0, col: 0 })
+		const params = { rows: 5, cols: 5, mines: 10 }
+		const geometry = square(params)
+		const editor = BoardEditor.create({ geometry, params }).mine({
+			row: 0,
+			col: 0,
+		})
 
 		const engine = new GameEngine({
-			type: 'square',
+			geometry,
 			// намеренно исходные params, а не editor.gameParams
 			params: { rows: 5, cols: 5, mines: 10 },
 			data: editor.build(),
@@ -91,9 +99,10 @@ describe('BoardEditor', () => {
 	})
 
 	it('cover / unflag / clearMarks reset marks without removing mines', () => {
+		const params = { rows: 5, cols: 5, mines: 1 }
 		const editor = BoardEditor.create({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 1 },
+			geometry: square(params),
+			params,
 		})
 			.mine({ row: 0, col: 0 })
 			.reveal({ row: 1, col: 1 })

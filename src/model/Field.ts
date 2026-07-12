@@ -1,4 +1,4 @@
-import { createGrid } from '../lib/utils'
+import { createGrid, createKey } from '../lib/utils'
 import { Cell } from './Cell'
 
 import type {
@@ -38,7 +38,13 @@ export class Field {
 	 * @param rng - Optional custom random number generator (defaults to Math.random)
 	 * @param geometry - Geometry handler for field operations
 	 */
-	constructor({ params, data, rng, geometry }: ConstructorFieldProps) {
+	constructor({
+		params,
+		data,
+		rng,
+		geometry,
+		excludeFromMines,
+	}: ConstructorFieldProps) {
 		this.params = params
 
 		this.geometry = geometry
@@ -48,7 +54,7 @@ export class Field {
 		// `data` — готовая раскладка (редактор / persist / clone); RNG только для пустого поля
 		this.minesPlaced =
 			data != null || this.grid.some(r => r.some(c => c?.isMine))
-		this.placeMines()
+		this.placeMines(excludeFromMines)
 	}
 
 	/**
@@ -159,12 +165,10 @@ export class Field {
 	}
 
 	/**
-	 * Places mines randomly across the field.
-	 * Optional `excludedPos` skips one cell (legacy deferred-placement helper).
-	 * The engine prefers early placement + `relocateMine` on first click instead.
-	 * @param excludedPos - Optional position to exclude from candidates
+	 * Случайная расстановка мин. `excludeFromMines` убирает клетки из кандидатов
+	 * (стартовая позиция и соседи для zero opening / solvable-генератора).
 	 */
-	private placeMines(excludedPos?: Position): void {
+	private placeMines(excludeFromMines?: Position[]): void {
 		if (this.minesPlaced) return
 
 		this.minesPlaced = true
@@ -184,12 +188,13 @@ export class Field {
 				return positions
 			})()
 
-		const candidates = excludedPos
-			? basePositions.filter(
-					pos =>
-						!(pos.row === excludedPos.row && pos.col === excludedPos.col),
-				)
-			: [...basePositions]
+		const excluded = new Set(
+			(excludeFromMines ?? []).map(pos => createKey(pos)),
+		)
+		const candidates =
+			excluded.size === 0
+				? [...basePositions]
+				: basePositions.filter(pos => !excluded.has(createKey(pos)))
 
 		if (mines > candidates.length) {
 			console.warn(
@@ -206,9 +211,7 @@ export class Field {
 	}
 
 	/**
-	 * Moves a mine from one position to another.
-	 * @param from - Source position to remove the mine from
-	 * @param to - Target position to place the mine at
+	 * Переносит мину с `from` на `to` и пересчитывает соседние счётчики.
 	 */
 	public relocateMine(from: Position, to: Position) {
 		this.unMineCell(from)

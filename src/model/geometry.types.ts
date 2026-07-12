@@ -31,6 +31,12 @@ export interface ConstructorFieldProps {
 
 	/** Optional pre-existing cell data to initialize the field with */
 	data?: FieldGrid
+
+	/**
+	 * Позиции, исключаемые из RNG-расстановки мин (start / safe opening).
+	 * Игнорируется, если передан `data`.
+	 */
+	excludeFromMines?: Position[]
 }
 
 /**

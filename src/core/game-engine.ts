@@ -1,9 +1,8 @@
-import { createKey } from '../lib/utils'
 import {
 	assertValidGameParams,
 	InvalidGameParamsError,
 } from '../lib/validate-params'
-import type { CreateFieldAnalyzer } from '../model/analyzer.types'
+import { createKey } from '../lib/utils'
 import type { GameEngineChangeListener } from '../model/engine-events.types'
 import { Cell } from '../model/Cell'
 import { Field } from '../model/Field'
@@ -13,8 +12,6 @@ import type {
 	CellData,
 	FieldGeometry,
 	FieldState,
-	FieldType,
-	GameMode,
 	GameParams,
 	GameSnapshot,
 	GameStatus,
@@ -26,8 +23,6 @@ import {
 	PERSISTED_GAME_VERSION,
 } from '../model/types'
 
-import { Solver } from './field-solver'
-
 export { InvalidGameParamsError }
 
 type HistoryEntry = {
@@ -38,57 +33,41 @@ type HistoryEntry = {
 
 const DEFAULT_MAX_HISTORY = 100
 
-const defaultCreateAnalyzer: CreateFieldAnalyzer = field => new Solver(field)
-
 /**
  * Main game engine for managing minesweeper game state and actions.
- * Handles cell revelation, flagging, game status, and mode-specific logic.
+ * Handles cell revelation, flagging, game status, and first-click relocate.
+ * Solvable layouts are produced separately via `generateSolvableBoard`.
  */
 export class GameEngine {
-	private mode: GameMode
 	private field: Field
 	private params: GameParams
 	private status: GameStatus
 	private flagsRemaining: number
 
 	private readonly geometry: FieldGeometry
-	private readonly fieldType?: FieldType
 	private readonly rng?: () => number
-	private readonly createAnalyzer: CreateFieldAnalyzer
 	private readonly maxHistory: number
 	private history: HistoryEntry[] = []
 	private readonly changeListeners = new Set<GameEngineChangeListener>()
 
 	/**
-	 * Creates a new game engine instance.
-	 * @param config - Game configuration including field type, parameters, and optional mode
-	 * @throws {InvalidGameParamsError} If rows/cols/mines fail validation
+	 * @param config - Обязательны `geometry` и `params`
+	 * @throws {InvalidGameParamsError} при невалидных params
 	 */
 	constructor(config: MineSweeperConfig) {
 		const {
-			mode = 'guessing',
-			createAnalyzer = defaultCreateAnalyzer,
 			maxHistory = DEFAULT_MAX_HISTORY,
+			geometry,
 			...fieldConfig
 		} = config
 
-		this.mode = mode
 		this.params = fieldConfig.params
 		this.status = 'idle'
-		this.createAnalyzer = createAnalyzer
 		this.maxHistory = Math.max(0, maxHistory)
 		this.rng = fieldConfig.rng
-		this.fieldType = 'type' in config ? config.type : undefined
+		this.geometry = geometry
 
 		assertValidGameParams(this.params)
-
-		this.geometry =
-			'geometry' in config && config.geometry
-				? config.geometry
-				: GeometryFactory.create({
-						type: config.type!,
-						params: this.params,
-					})
 
 		this.field = new Field({
 			params: fieldConfig.params,
@@ -132,29 +111,27 @@ export class GameEngine {
 
 	/**
 	 * Сериализует текущее состояние партии (поле + статус + params).
-	 * RNG и custom geometry в снимок не входят.
+	 * Geometry в снимок не входит — при restore передайте её в options.
 	 */
 	public serialize(): PersistedGameState {
 		return {
 			version: PERSISTED_GAME_VERSION,
 			params: this.params,
-			mode: this.mode,
 			status: this.status,
-			...(this.fieldType ? { type: this.fieldType } : {}),
 			field: this.field.getFieldSnapshot().field,
 		}
 	}
 
 	/**
 	 * Восстанавливает движок из сериализованного состояния.
-	 * Для партий с custom geometry передайте `geometry` в options.
+	 * Передайте `options.geometry` (для legacy-снимков с `type` geometry
+	 * может быть восстановлена через GeometryFactory).
 	 */
 	public static fromPersistedState(
 		state: PersistedGameState,
 		options?: {
 			geometry?: FieldGeometry
 			rng?: () => number
-			createAnalyzer?: CreateFieldAnalyzer
 			maxHistory?: number
 		},
 	): GameEngine {
@@ -174,29 +151,17 @@ export class GameEngine {
 
 		if (!geometry) {
 			throw new Error(
-				'Persisted state has no field type; pass options.geometry to restore.',
+				'Pass options.geometry to restore a persisted game (geometry is not embedded in the snapshot).',
 			)
 		}
 
-		const engine = state.type
-			? new GameEngine({
-					type: state.type,
-					params: state.params,
-					mode: state.mode,
-					data: state.field,
-					rng: options?.rng,
-					createAnalyzer: options?.createAnalyzer,
-					maxHistory: options?.maxHistory,
-				})
-			: new GameEngine({
-					geometry,
-					params: state.params,
-					mode: state.mode,
-					data: state.field,
-					rng: options?.rng,
-					createAnalyzer: options?.createAnalyzer,
-					maxHistory: options?.maxHistory,
-				})
+		const engine = new GameEngine({
+			geometry,
+			params: state.params,
+			data: state.field,
+			rng: options?.rng,
+			maxHistory: options?.maxHistory,
+		})
 
 		engine.status = state.status
 		engine.flagsRemaining = engine.getFlagsRemaining(
@@ -208,10 +173,9 @@ export class GameEngine {
 
 	/**
 	 * Reveals a cell at the specified position.
-	 * On the first click, if the cell is mined, relocates that mine to another empty cell
-	 * (`relocateMine`) so the click is safe without regenerating the whole field.
-	 * In 'no-guessing' mode, prevents revealing cells when solver detects uncertain states.
-	 * Supports chord clicking (clicking on revealed cells to reveal adjacent safe cells).
+	 * On the first click, ensures a zero-opening at the click (relocates mines from
+	 * the cell and its neighbors outside the protected zone), then reveals the area.
+	 * Supports chord clicking.
 	 */
 	public revealCell(pos: Position): ActionResult {
 		let actionStatus: GameStatus = this.status
@@ -223,17 +187,11 @@ export class GameEngine {
 		const handledCells: CellData[] = []
 		const explodedCells: CellData[] = []
 
+		let openingFailed = false
 		if (actionStatus === 'idle') {
-			if (operatedField.cloneCell(pos)?.isMine) {
-				const unminedCell = operatedField.grid
-					.flat()
-					.find(cell => cell && !cell.isMine)
-				if (!unminedCell) {
-					actionStatus = 'lost'
-				} else {
-					operatedField.relocateMine(pos, unminedCell.position)
-					actionStatus = 'playing'
-				}
+			if (!GameEngine.ensureFirstClickOpening(operatedField, pos)) {
+				openingFailed = true
+				actionStatus = 'lost'
 			} else {
 				actionStatus = 'playing'
 			}
@@ -246,35 +204,10 @@ export class GameEngine {
 
 		if (actionStatus === 'playing' && !target.isFlagged) {
 			if (target.isMine) {
-				const handleLoss = () => {
-					target.isRevealed = true
-					const targetSnapshot = GameEngine.snapshotCell(target)
-					handledCells.push(targetSnapshot)
-					explodedCells.push(targetSnapshot)
-				}
-
-				if (this.mode === 'no-guessing') {
-					const analyzer = this.createAnalyzer(operatedField)
-					const probabilities = analyzer.solve()
-
-					if (analyzer.isGuessingState(probabilities)) {
-						if (
-							probabilities.some(
-								p =>
-									p.value === 1 &&
-									createKey(p.position) === target.key,
-							)
-						) {
-							handleLoss()
-						} else {
-							return this.toggleFlag(pos)
-						}
-					} else {
-						handleLoss()
-					}
-				} else {
-					handleLoss()
-				}
+				target.isRevealed = true
+				const targetSnapshot = GameEngine.snapshotCell(target)
+				handledCells.push(targetSnapshot)
+				explodedCells.push(targetSnapshot)
 			} else if (target.isRevealed) {
 				const result = this.handleRevealedClick(target, operatedField)
 				revealedCells.push(...result.revealedCells)
@@ -290,7 +223,10 @@ export class GameEngine {
 		}
 
 		const resultState = operatedField.getFieldSnapshot()
-		actionStatus = this.determineStatus(resultState)
+		// Failed opening уже 'lost'; determineStatus иначе вернул бы 'playing'
+		actionStatus = openingFailed
+			? 'lost'
+			: this.determineStatus(resultState)
 		const targetSnapshot = GameEngine.snapshotCell(target)
 
 		return {
@@ -309,6 +245,68 @@ export class GameEngine {
 				this.commit(operatedField, actionStatus, resultState)
 			},
 		}
+	}
+
+	/**
+	 * Гарантирует opening на первом клике: стартовая клетка становится `isEmpty`
+	 * за счёт relocate мин с неё и её соседей за пределы защищённой зоны.
+	 * @returns `false`, если некуда перенести мины
+	 */
+	private static ensureFirstClickOpening(
+		field: Field,
+		startPos: Position,
+	): boolean {
+		const start = field.getCell(startPos)
+		if (!start) return false
+
+		const protectedKeys = new Set<string>([
+			createKey(startPos),
+			...field.getSiblings(startPos).map(sibling => sibling.key),
+		])
+
+		const relocateOut = (from: Position): boolean => {
+			const destination = GameEngine.findRelocateDestination(
+				field,
+				protectedKeys,
+				from,
+			)
+			if (!destination) return false
+			field.relocateMine(from, destination)
+			return true
+		}
+
+		if (start.isMine && !relocateOut(startPos)) return false
+
+		const maxRelocations = protectedKeys.size + 1
+		for (let i = 0; i < maxRelocations && !start.isEmpty; i++) {
+			const minedNeighbor = field
+				.getSiblings(startPos)
+				.find(sibling => sibling.isMine)
+			if (!minedNeighbor) break
+			if (!relocateOut(minedNeighbor.position)) return false
+		}
+
+		return start.isEmpty
+	}
+
+	/**
+	 * Цель для переноса мины: случайная безопасная клетка вне защищённой зоны старта.
+	 */
+	private static findRelocateDestination(
+		field: Field,
+		protectedKeys: Set<string>,
+		from: Position,
+	): Position | null {
+		const fromKey = createKey(from)
+		const candidates: Position[] = []
+		for (const cell of field.grid.flat()) {
+			if (!cell || cell.isMine) continue
+			if (protectedKeys.has(cell.key) || cell.key === fromKey) continue
+			candidates.push(cell.position)
+		}
+		if (candidates.length === 0) return null
+		const idx = Math.floor(field.rng() * candidates.length)
+		return candidates[idx] ?? null
 	}
 
 	/**

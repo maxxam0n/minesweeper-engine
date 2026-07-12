@@ -6,9 +6,10 @@ import { buildGrid, listPositions } from '../utils/field-builder.utils'
 
 describe('IdealSolver.getMetrics', () => {
 	it('returns one click for an empty field', () => {
+		const params = { rows: 5, cols: 5, mines: 0 }
 		const solver = new IdealSolver({
-			type: 'square',
-			params: { rows: 5, cols: 5, mines: 0 },
+			geometry: new SquareGeometry(params),
+			params,
 		})
 
 		expect(solver.getMetrics()).toEqual({ total: 1, remaining: 1 })

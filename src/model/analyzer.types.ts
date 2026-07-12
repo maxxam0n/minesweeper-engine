@@ -3,7 +3,8 @@ import type { FieldState } from './field-state.types'
 import type { Position } from './primitives.types'
 
 /**
- * Анализатор поля для режима no-guessing.
+ * Анализатор поля для проверки решаемости (генератор no-guessing)
+ * и подсказок во время игры.
  * По умолчанию — MinesweeperSolver; можно подменить через createAnalyzer.
  */
 export interface FieldAnalyzer {

@@ -1,5 +1,4 @@
 import { Field } from '../model/Field'
-import { GeometryFactory } from '../model/geometry/Factory'
 import type { CellData, MineProbability } from '../model/types'
 import type { FieldView, SolverConfig } from '../model/field-solver.types'
 import { DirectInference } from './field-solver/direct-inference'
@@ -126,7 +125,6 @@ export class Solver {
 			return config
 		}
 
-		const geometry = config.geometry || GeometryFactory.create(config)
-		return new Field({ ...config, geometry })
+		return new Field(config)
 	}
 }

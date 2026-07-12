@@ -13,6 +13,7 @@ A lightweight, dependency-free, and platform-agnostic Minesweeper game engine wr
 - **Built-in Solver**: Includes a solver that can determine certain mines and safe cells, with a foundation for more advanced probabilistic analysis.
 - **Ideal Metrics Solver**: Includes an "ideal" solver to estimate minimal click count for a given fully-mined field (useful for score/efficiency metrics).
 - **Multiple Field Types**: Support for square, hexagonal, and triangular field shapes.
+- **No-guessing boards**: Generate layouts that are fully solvable by the built-in analyzer from a chosen start cell, with optional progress callbacks.
 - **Testable**: Injectable Random Number Generator (RNG) allows for creating deterministic and easily testable game states.
 - **Written in TypeScript**: Strong typing for a predictable and robust developer experience.
 
@@ -74,17 +75,16 @@ pnpm add @maxxam0n/minesweeper-engine
 Here's a quick example of how to create a game, perform an action, and get the updated state.
 
 ```typescript
-import { MinesweeperEngine } from '@maxxam0n/minesweeper-engine'
+import {
+	GeometryFactory,
+	MinesweeperEngine,
+} from '@maxxam0n/minesweeper-engine'
 
-// 1. Create a new game engine instance
-const engine = new MinesweeperEngine({
-	type: 'square', // The shape of the field
-	params: {
-		rows: 10,
-		cols: 10,
-		mines: 15,
-	},
-})
+const params = { rows: 10, cols: 10, mines: 15 }
+const geometry = GeometryFactory.create({ type: 'square', params })
+
+// 1. Create a new game engine instance (geometry is always required)
+const engine = new MinesweeperEngine({ geometry, params })
 
 console.log('Game started with status:', engine.gameSnapshot.status) // -> 'idle'
 
@@ -116,21 +116,20 @@ console.log(engine.gameSnapshot.flaggedCells.length) // -> 1
 
 ### `MinesweeperEngine`
 
-The main class for managing the game flow.
+The main class for managing the game flow. It does **not** generate solvable boards — pass a ready `data` grid when you need a fixed layout.
 
 #### `new MinesweeperEngine(config)`
 
 Creates a new game instance.
 
 - `config`: `MineSweeperConfig`
-   - `type`: The shape of the field. Supports `'square'`, `'hexagonal'`, or `'triangle'`.
+   - `geometry`: **Required.** Built-in via `GeometryFactory.create({ type, params })` or classes `SquareGeometry` / `HexagonalGeometry` / `TriangularGeometry`, or your own `FieldGeometry`.
    - `params`: `GameParams` (`rows`, `cols`, `mines`). Requires integer `rows`/`cols` ≥ 5 and `0 ≤ mines ≤ floor(rows * cols * 0.5)`.
-   - `mode?`: Game mode - `'guessing'` (default) or `'no-guessing'` (reduces "guessing" outcomes by preferring a flag action in some guessing states).
-   - `rng?`: An optional Random Number Generator function (`() => number`) for deterministic testing. Defaults to `Math.random`.
-   - `createAnalyzer?`: Optional factory `(field) => FieldAnalyzer` for `no-guessing` mode. Defaults to the built-in solver.
+   - `data?`: Prebuilt field grid (`generateSolvableBoard`, `BoardEditor`, persist).
+   - `rng?`: Optional RNG (`() => number`) for deterministic mine placement. Defaults to `Math.random`.
    - `maxHistory?`: Max undo stack size (default `100`). Use `0` to disable undo.
 
-Throws `InvalidGameParamsError` when `params` fail validation (also exported from the package).
+Throws `InvalidGameParamsError` when `params` fail validation.
 
 #### `engine.revealCell(position)`
 
@@ -139,7 +138,9 @@ Generates an action to reveal a cell.
 - `position`: `{ row: number, col: number }`
 - Returns: `ActionResult`
 
-**First-click safety.** Mines are placed when the field is created (constructor), not deferred until the first reveal. If the first click lands on a mine, the engine moves that mine to another empty cell via `relocateMine` — this is cheaper than regenerating the whole board and keeps the rest of the RNG layout intact. After that, status becomes `'playing'`.
+**First-click opening.** On the first reveal the engine clears mines from the clicked cell and its neighbors (via `relocateMine` to a random safe cell outside that zone, using the engine `rng`), so the click is always an empty zero and opens an area through flood-fill. If there is nowhere to move those mines, the action results in a loss.
+
+For boards from `generateSolvableBoard`, the first reveal **must** be the returned `startPos`. Solvability is guaranteed only from that cell; another first click can relocate mines and break the no-guessing layout. At `startPos` the opening is already a zero, so relocate is a no-op.
 
 #### `engine.toggleFlag(position)`
 
@@ -164,11 +165,51 @@ const off = engine.onChange(({ reason, snapshot, previousStatus }) => {
 
 #### `engine.serialize()` / `GameEngine.fromPersistedState(state, options?)`
 
-Persists `{ version, params, mode, status, type?, field }` for save/load. Custom geometry is not embedded — pass `options.geometry` when restoring such games.
+Persists `{ version, params, status, field }` (geometry is **not** embedded). Always pass `options.geometry` when restoring. Legacy snapshots that still include `type` can rebuild geometry via `GeometryFactory` if `options.geometry` is omitted.
 
 #### `engine.gameSnapshot` (getter)
 
 A getter that returns a complete snapshot of the current game state, including the field, cell lists, and game status.
+
+### `generateSolvableBoard(config)`
+
+Standalone generator (sync). Produces a closed mine layout that is fully solvable by the built-in analyzer from `startPos`. Run it on the main thread or inside your own Worker — then pass `data` into the engine.
+
+```typescript
+import {
+	generateSolvableBoard,
+	GeometryFactory,
+	MinesweeperEngine,
+} from '@maxxam0n/minesweeper-engine'
+
+const params = { rows: 9, cols: 9, mines: 10 }
+const geometry = GeometryFactory.create({ type: 'square', params })
+const startPos = { row: 4, col: 4 }
+
+const board = generateSolvableBoard({
+	geometry,
+	params,
+	startPos,
+	onProgress: ({ attempt, maxAttempts, phase }) => {
+		console.log(phase, attempt, '/', maxAttempts)
+	},
+})
+
+const engine = new MinesweeperEngine({
+	geometry,
+	params,
+	data: board.data,
+})
+
+engine.revealCell(board.startPos).apply()
+```
+
+- `startPos`: required start cell (zero opening: cell + neighbors are mine-free). Call `revealCell(board.startPos)` first.
+- `maxAttempts?`: sampling budget (default `500`).
+- `createAnalyzer?`: override solvability oracle (defaults to built-in solver).
+- `onProgress?`: `{ attempt, maxAttempts, phase: 'sample' | 'simulate' }`.
+
+Throws `SolvableBoardGenerationError` if no solvable layout is found within `maxAttempts`. Also exported from `@maxxam0n/minesweeper-engine/solver`.
 
 ### `ActionResult`
 
@@ -186,22 +227,21 @@ A class for analyzing a game board to find guaranteed moves.
 The solver uses **revealed numbers and mine-count constraints only**. It does **not** treat player flags as known mines: a flag can be wrong, and trusting it would corrupt the whole inference chain. Flags are a UI hint for the player, not ground truth for the solver.
 
 ```typescript
-import { MinesweeperSolver } from '@maxxam0n/minesweeper-engine'
+import {
+	GeometryFactory,
+	MinesweeperSolver,
+} from '@maxxam0n/minesweeper-engine'
 
 const gameParams = { rows: 10, cols: 10, mines: 15 }
+const geometry = GeometryFactory.create({ type: 'square', params: gameParams })
 
-// Note: The MinesweeperSolver needs the same game data as the engine.
-// You can get this from the engine's snapshot.
 const solver = new MinesweeperSolver({
-	type: 'square',
+	geometry,
 	params: gameParams,
-	data: engine.gameSnapshot.field, // Use the current field from the game
+	data: engine.gameSnapshot.field,
 })
 
-// Get an array of probabilities for (some) unrevealed cells.
-// value: 1 = 100% a mine, 0 = 100% safe.
 const hints = solver.solve()
-
 const safeMoves = hints.filter(h => h.value === 0)
 console.log(`Found ${safeMoves.length} guaranteed safe moves.`)
 ```
@@ -214,7 +254,7 @@ Estimates minimal click count for a given field when the mine layout is already 
 import { MinesweeperIdealSolver } from '@maxxam0n/minesweeper-engine'
 
 const ideal = new MinesweeperIdealSolver({
-	type: 'square',
+	geometry,
 	params: gameParams,
 	data: engine.gameSnapshot.field,
 })
@@ -231,13 +271,14 @@ Fluent builder for deterministic boards (puzzles, tutorials, tests). No RNG — 
 ```typescript
 import {
 	BoardEditor,
+	GeometryFactory,
 	MinesweeperEngine,
 } from '@maxxam0n/minesweeper-engine'
 
-const editor = BoardEditor.create({
-	type: 'square',
-	params: { rows: 9, cols: 9, mines: 0 },
-})
+const params = { rows: 9, cols: 9, mines: 0 }
+const geometry = GeometryFactory.create({ type: 'square', params })
+
+const editor = BoardEditor.create({ geometry, params })
 	.mine([
 		{ row: 0, col: 0 },
 		{ row: 2, col: 3 },
@@ -246,7 +287,7 @@ const editor = BoardEditor.create({
 	.flag({ row: 0, col: 0 })
 
 const engine = new MinesweeperEngine({
-	type: 'square',
+	geometry,
 	params: editor.gameParams, // mines synced to placed count
 	data: editor.build(),
 })
@@ -257,7 +298,10 @@ Methods: `mine` / `unmine`, `reveal` / `cover`, `flag` / `unflag`, `clearMarks`,
 ## Subpath imports
 
 ```typescript
-import { MinesweeperSolver } from '@maxxam0n/minesweeper-engine/solver'
+import {
+	generateSolvableBoard,
+	MinesweeperSolver,
+} from '@maxxam0n/minesweeper-engine/solver'
 import {
 	GeometryFactory,
 	SquareGeometry,
@@ -266,6 +310,7 @@ import {
 } from '@maxxam0n/minesweeper-engine/geometry'
 ```
 
+Built-in geometries are also re-exported from the main package entry.
 ## 💡 Advanced Usage
 
 ### Deterministic Games with a Seeded RNG
@@ -276,25 +321,30 @@ For testing or creating shareable game challenges, you can provide your own seed
 // You might need to install a library for this, e.g., `seedrandom`
 // npm install seedrandom
 import seedrandom from 'seedrandom'
-import { MinesweeperEngine } from '@maxxam0n/minesweeper-engine'
+import {
+	GeometryFactory,
+	MinesweeperEngine,
+} from '@maxxam0n/minesweeper-engine'
 
 const seed = 'my-secret-seed'
 const deterministicRng = seedrandom(seed)
+const params = { rows: 16, cols: 30, mines: 99 }
+const geometry = GeometryFactory.create({ type: 'square', params })
 
 const engine = new MinesweeperEngine({
-	type: 'square',
-	params: { rows: 16, cols: 30, mines: 99 },
-	rng: deterministicRng, // Inject the seeded RNG
+	geometry,
+	params,
+	rng: deterministicRng,
 })
 
 // Every game created with this seed starts with the same mine layout.
-// Note: if the first click hits a mine, that single mine is relocated —
-// so the post-first-click board can differ from the initial seeded layout.
+// Note: the first click always forces a zero-opening (mines in the click
+// neighborhood are relocated outside that zone), so the post-first-click
+// board can differ from the initial seeded layout.
 ```
-
 ### Custom Geometry (odd-q hex example)
 
-If you need a custom grid, implement `FieldGeometry` and pass `geometry` instead of `type`.
+Implement `FieldGeometry` and pass it as `geometry` (same as built-ins).
 The built-in `HexagonalGeometry` uses even-q vertical layout (even columns shifted down).
 The opposite layout is odd-q: odd columns are shifted down.
 

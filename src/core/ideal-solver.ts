@@ -1,5 +1,4 @@
 import { Field } from '../model/Field'
-import { GeometryFactory } from '../model/geometry/Factory'
 import type { Cell } from '../model/Cell'
 import type { MineSweeperConfig } from '../model/types'
 import type {
@@ -19,7 +18,7 @@ export class IdealSolver {
 
 	/**
 	 * Creates a new ideal solver instance.
-	 * @param config - Field configuration including parameters, type, and cell data
+	 * @param config - Field configuration including geometry, parameters, and cell data
 	 * @param options - Optional solver behavior configuration
 	 */
 	constructor(
@@ -29,8 +28,7 @@ export class IdealSolver {
 		if (config instanceof Field) {
 			this.field = config.cloneSelf()
 		} else {
-			const geometry = config.geometry || GeometryFactory.create(config)
-			this.field = new Field({ ...config, geometry })
+			this.field = new Field(config)
 		}
 		this.options = {
 			countFlags: options?.countFlags ?? false,
