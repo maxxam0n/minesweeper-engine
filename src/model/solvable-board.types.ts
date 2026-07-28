@@ -7,36 +7,37 @@ import type { GameParams, Position } from './primitives.types'
  * Прогресс генерации решаемого поля (для UI / Worker).
  */
 export type SolvableGenerationProgress = {
-	attempt: number
-	maxAttempts: number
-	phase: 'sample' | 'simulate'
+	readonly attempt: number
+	readonly maxAttempts: number
+	readonly phase: 'sample' | 'simulate'
 }
 
 /**
  * Конфиг генерации решаемого поля. Geometry обязательна.
  */
 export type SolvableBoardGenerateConfig = {
-	params: GameParams
-	geometry: FieldGeometry
+	readonly params: GameParams
+	readonly geometry: FieldGeometry
 	/**
 	 * Стартовая клетка: генератор исключает её и соседей из мин (zero opening)
 	 * и проверяет решаемость именно с этого хода. Первый клик в движке — `startPos`.
 	 */
-	startPos: Position
-	rng?: () => number
-	/** Максимум попыток сэмплинга (по умолчанию 500) */
-	maxAttempts?: number
-	onProgress?: (progress: SolvableGenerationProgress) => void
+	readonly startPos: Position
+	/** Генератор случайных чисел, возвращающий конечное значение в диапазоне [0, 1). */
+	readonly rng?: () => number
+	/** Положительное безопасное целое число попыток сэмплинга (по умолчанию 500). */
+	readonly maxAttempts?: number
+	readonly onProgress?: (progress: SolvableGenerationProgress) => void
 	/** Фабрика анализатора для проверки решаемости; по умолчанию встроенный Solver */
-	createAnalyzer?: CreateFieldAnalyzer
+	readonly createAnalyzer?: CreateFieldAnalyzer
 }
 
 /**
  * Успешный результат генерации: раскладка ещё не открыта, готова к `data` движка.
  */
 export type SolvableBoardResult = {
-	data: FieldGrid
-	startPos: Position
-	attempts: number
-	params: GameParams
+	readonly data: FieldGrid
+	readonly startPos: Position
+	readonly attempts: number
+	readonly params: GameParams
 }

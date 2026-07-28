@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { GameEngine } from '../../src/core/game-engine'
+import {
+	GameEngine,
+	InvalidPersistedGameStateError,
+} from '../../src/core/game-engine'
 import { BoardEditor } from '../../src/model/board-editor'
 import { GeometryFactory } from '../../src/model/geometry/Factory'
 
@@ -79,7 +82,7 @@ describe('BoardEditor', () => {
 		expect(engine.gameSnapshot.revealedCells.length).toBeGreaterThan(0)
 	})
 
-	it('does not RNG-fill mines when data is provided with params.mines > 0', () => {
+	it('rejects data whose mine count disagrees with params', () => {
 		const params = { rows: 5, cols: 5, mines: 10 }
 		const geometry = square(params)
 		const editor = BoardEditor.create({ geometry, params }).mine({
@@ -87,15 +90,14 @@ describe('BoardEditor', () => {
 			col: 0,
 		})
 
-		const engine = new GameEngine({
-			geometry,
-			// намеренно исходные params, а не editor.gameParams
-			params: { rows: 5, cols: 5, mines: 10 },
-			data: editor.build(),
-		})
-
-		expect(engine.gameSnapshot.minedCells).toHaveLength(1)
-		expect(engine.gameSnapshot.field[0][0]?.isMine).toBe(true)
+		expect(
+			() =>
+				new GameEngine({
+					geometry,
+					params,
+					data: editor.build(),
+				}),
+		).toThrow(InvalidPersistedGameStateError)
 	})
 
 	it('cover / unflag / clearMarks reset marks without removing mines', () => {

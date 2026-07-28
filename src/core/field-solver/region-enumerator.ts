@@ -2,49 +2,65 @@ import type {
 	Constraint,
 	RegionConstraint,
 } from '../../model/field-solver.types'
+import { parseKey } from '../../lib/utils'
+import { reduceConstraintSystem } from './constraint-reducer'
 import { ProbabilityStore } from './probability-store'
 
 const MAX_FULL_ENUM_VARS = 18
 const MAX_LOOKAHEAD_VARS = 30
+const MAX_LOOKAHEAD_SEARCH_NODES = 100_000
 
 type EnumerationResult = { total: number; counts: number[] }
+type SearchBudget = { remainingNodes: number }
+type Satisfiability =
+	| 'satisfiable'
+	| 'unsatisfiable'
+	| 'budget-exceeded'
 
 export class RegionEnumerator {
-	/** Кэш в рамках одного solve()-прохода; не живёт между партиями/инстансами. */
+	/** Кэши действуют только в рамках одного вызова solve(). */
 	private readonly enumerationCache = new Map<string, EnumerationResult>()
+	private readonly satisfiabilityCache = new Map<string, boolean>()
+	private lookaheadNodesRemaining = MAX_LOOKAHEAD_SEARCH_NODES
 
 	constructor(private readonly probabilities: ProbabilityStore) {}
 
 	public clearCache(): void {
 		this.enumerationCache.clear()
+		this.satisfiabilityCache.clear()
+		this.lookaheadNodesRemaining = MAX_LOOKAHEAD_SEARCH_NODES
 	}
 
 	/**
-	 * Evaluates a subregion by enumerating all valid mine configurations.
-	 * Uses different strategies based on region size:
-	 * - Small regions (≤18 vars): full enumeration with caching
-	 * - Medium regions (≤30 vars): lookahead to find certain mines/safe cells
-	 * - Large regions: skipped (too expensive)
+	 * Для малых регионов перечисляет все конфигурации, для средних выполняет
+	 * ограниченный по числу узлов поиск решений, большие регионы пропускает.
 	 */
 	public evaluateSubregion(vars: string[], cons: Constraint[]): boolean {
 		let updated = false
+		const { variables, constraints } = reduceConstraintSystem(
+			vars,
+			cons,
+			this.probabilities,
+		)
 
-		if (vars.length <= MAX_FULL_ENUM_VARS) {
+		if (variables.length <= MAX_FULL_ENUM_VARS) {
 			// Full enumeration: count how many valid configurations have each variable as mine
-			const { counts, total } = this.enumerateRegion(vars, cons)
+			const { counts, total } = this.enumerateRegion(
+				variables,
+				constraints,
+			)
 			if (total === 0) return false
 
 			// Calculate probability for each variable: configurations with mine / total configurations
-			for (let i = 0; i < vars.length; i++) {
-				const key = vars[i]
+			for (let i = 0; i < variables.length; i++) {
+				const key = variables[i]
 				const probValue = counts[i] / total
 				if (this.probabilities.setProbability(key, probValue)) {
 					updated = true
 				}
 			}
-		} else if (vars.length <= MAX_LOOKAHEAD_VARS) {
-			// Lookahead: for each variable, check if it can be forced to be mine or safe
-			if (this.processByLookAhead(vars, cons)) {
+		} else if (variables.length <= MAX_LOOKAHEAD_VARS) {
+			if (this.processByLookAhead(variables, constraints)) {
 				updated = true
 			}
 		}
@@ -113,6 +129,14 @@ export class RegionEnumerator {
 		varCount: number,
 		constraints: RegionConstraint[],
 	): { counts: number[]; total: number } {
+		const counts = new Array<number>(varCount).fill(0)
+		const hasImpossibleConstraint = constraints.some(
+			constraint =>
+				constraint.mines < 0 ||
+				constraint.mines > constraint.indices.length,
+		)
+		if (hasImpossibleConstraint) return { counts, total: 0 }
+
 		// Track mine count and unknown count for each constraint
 		const mineInConstraint = new Array<number>(constraints.length).fill(0)
 		const unknownInConstraint = constraints.map(rc => rc.indices.length)
@@ -122,7 +146,6 @@ export class RegionEnumerator {
 			rc.indices.forEach(idx => consForVar[idx].push(ci))
 		})
 
-		const counts = new Array<number>(varCount).fill(0)
 		let totalValid = 0
 		const assignment: boolean[] = new Array(varCount)
 
@@ -181,14 +204,13 @@ export class RegionEnumerator {
 		return { counts, total: totalValid }
 	}
 
-	/**
-	 * Lookahead strategy for medium-sized regions: for each variable, check if
-	 * forcing it to be safe or mine leads to an impossible constraint system.
-	 * If only one value is possible, we've found a certainty.
-	 */
+	/** Ищет точные значения, проверяя выполнимость обоих значений переменной. */
 	private processByLookAhead(vars: string[], cons: Constraint[]): boolean {
 		let updated = false
 		const varCount = vars.length
+		const budget: SearchBudget = {
+			remainingNodes: this.lookaheadNodesRemaining,
+		}
 		const indexOf = new Map<string, number>()
 		vars.forEach((v, i) => indexOf.set(v, i))
 		const regionCons: RegionConstraint[] = cons.map(c => ({
@@ -198,79 +220,179 @@ export class RegionEnumerator {
 
 		for (let localIdx = 0; localIdx < varCount; localIdx++) {
 			const key = vars[localIdx]
-			if (this.probabilities.has(key)) continue
+			const existing = this.probabilities.get(key)
+			if (existing?.value === 0 || existing?.value === 1) continue
 
-			// Check if there exists a valid solution with this variable as safe
 			const canBeSafe = this.hasSolutionForced(
 				localIdx,
 				false,
 				varCount,
 				regionCons,
+				budget,
 			)
-			// Check if there exists a valid solution with this variable as mine
 			const canBeMine = this.hasSolutionForced(
 				localIdx,
 				true,
 				varCount,
 				regionCons,
+				budget,
 			)
 
-			// If only one value is possible, we've found a certainty
-			if (!canBeSafe && canBeMine) {
-				updated = this.probabilities.setProbability(key, 1) || updated
-			} else if (canBeSafe && !canBeMine) {
-				updated = this.probabilities.setProbability(key, 0) || updated
+			if (canBeSafe === 'unsatisfiable' && canBeMine === 'satisfiable') {
+				updated = this.probabilities.setExact(key, 1, parseKey(key)) || updated
+			} else if (
+				canBeSafe === 'satisfiable' &&
+				canBeMine === 'unsatisfiable'
+			) {
+				updated = this.probabilities.setExact(key, 0, parseKey(key)) || updated
 			}
+
+			if (budget.remainingNodes === 0) break
 		}
+
+		this.lookaheadNodesRemaining = budget.remainingNodes
 		return updated
 	}
 
 	/**
-	 * Checks if there exists a valid solution when a variable is forced to a specific value.
-	 * Reduces the constraint system by removing the forced variable and adjusting
-	 * constraint mine counts accordingly. Returns true if at least one valid solution exists.
+	 * Проверяет выполнимость системы при фиксированном значении переменной.
+	 * При исчерпании общего бюджета возвращает неопределённый результат.
 	 */
 	private hasSolutionForced(
 		forcedIdx: number,
 		forcedValue: boolean,
 		varCount: number,
 		constraints: RegionConstraint[],
-	): boolean {
-		// Create mapping to reindex variables after removing forced variable
+		budget: SearchBudget,
+	): Satisfiability {
 		const map: number[] = []
 		let newIdx = 0
 		for (let i = 0; i < varCount; i++) {
 			if (i === forcedIdx) {
-				map[i] = -1 // Mark forced variable
+				map[i] = -1
 			} else {
 				map[i] = newIdx++
 			}
 		}
 
-		// Build new constraint system with forced variable removed
 		const newCons: RegionConstraint[] = []
 		for (const rc of constraints) {
 			let mines = rc.mines
 			const indices: number[] = []
 			for (const idx of rc.indices) {
 				if (idx === forcedIdx) {
-					// If forced variable is a mine, reduce required mine count
 					if (forcedValue) mines--
 				} else {
 					indices.push(map[idx])
 				}
 			}
-			// If constraint becomes impossible, no solution exists
-			if (mines < 0 || mines > indices.length) return false
+			if (mines < 0 || mines > indices.length) return 'unsatisfiable'
 			newCons.push({ indices, mines })
 		}
 
 		const key = this.createConstraintsKey(varCount - 1, newCons)
-		let cached = this.enumerationCache.get(key)
-		if (!cached) {
-			cached = this.bruteForce(varCount - 1, newCons)
-			this.enumerationCache.set(key, cached)
+		const enumeration = this.enumerationCache.get(key)
+		if (enumeration) {
+			return enumeration.total > 0 ? 'satisfiable' : 'unsatisfiable'
 		}
-		return cached.total > 0
+
+		const cached = this.satisfiabilityCache.get(key)
+		if (cached !== undefined) {
+			return cached ? 'satisfiable' : 'unsatisfiable'
+		}
+
+		const result = this.findSatisfyingAssignment(
+			varCount - 1,
+			newCons,
+			budget,
+		)
+		if (result !== 'budget-exceeded') {
+			this.satisfiabilityCache.set(key, result === 'satisfiable')
+		}
+		return result
+	}
+
+	private findSatisfyingAssignment(
+		varCount: number,
+		constraints: RegionConstraint[],
+		budget: SearchBudget,
+	): Satisfiability {
+		for (const constraint of constraints) {
+			if (
+				constraint.mines < 0 ||
+				constraint.mines > constraint.indices.length
+			) {
+				return 'unsatisfiable'
+			}
+		}
+
+		const mineInConstraint = new Array<number>(constraints.length).fill(0)
+		const unknownInConstraint = constraints.map(
+			constraint => constraint.indices.length,
+		)
+		const constraintsForVariable: number[][] = Array.from(
+			{ length: varCount },
+			() => [],
+		)
+		constraints.forEach((constraint, constraintIndex) => {
+			for (const variableIndex of constraint.indices) {
+				constraintsForVariable[variableIndex].push(constraintIndex)
+			}
+		})
+
+		const variableOrder = Array.from(
+			{ length: varCount },
+			(_, index) => index,
+		).sort(
+			(left, right) =>
+				constraintsForVariable[right].length -
+				constraintsForVariable[left].length,
+		)
+
+		const search = (depth: number): Satisfiability => {
+			if (budget.remainingNodes === 0) return 'budget-exceeded'
+			budget.remainingNodes--
+			if (depth === varCount) return 'satisfiable'
+
+			const variableIndex = variableOrder[depth]
+			for (let value = 0; value <= 1; value++) {
+				const isMine = value === 1
+				let isFeasible = true
+
+				for (const constraintIndex of constraintsForVariable[
+					variableIndex
+				]) {
+					unknownInConstraint[constraintIndex]--
+					if (isMine) mineInConstraint[constraintIndex]++
+
+					const requiredMines = constraints[constraintIndex].mines
+					if (
+						mineInConstraint[constraintIndex] > requiredMines ||
+						mineInConstraint[constraintIndex] +
+							unknownInConstraint[constraintIndex] <
+							requiredMines
+					) {
+						isFeasible = false
+					}
+				}
+
+				const result = isFeasible
+					? search(depth + 1)
+					: 'unsatisfiable'
+
+				for (const constraintIndex of constraintsForVariable[
+					variableIndex
+				]) {
+					unknownInConstraint[constraintIndex]++
+					if (isMine) mineInConstraint[constraintIndex]--
+				}
+
+				if (result !== 'unsatisfiable') return result
+			}
+
+			return 'unsatisfiable'
+		}
+
+		return search(0)
 	}
 }

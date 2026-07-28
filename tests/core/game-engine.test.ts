@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GameEngine } from '../../src/core/game-engine'
 import { generateSolvableBoard } from '../../src/core/solvable-board-generator'
 import { InvalidGameParamsError } from '../../src/lib/validate-params'
+import { Cell } from '../../src/model/Cell'
 import { GeometryFactory } from '../../src/model/geometry/Factory'
 import { buildGrid } from '../utils/field-builder.utils'
 import { createRestrictedGeometry } from '../utils/geometry.utils'
@@ -186,6 +187,16 @@ describe('GameEngine', () => {
 				cell => cell.position.row === 1 && cell.position.col === 0,
 			),
 		).toBe(true)
+		expect(
+			new Set(
+				chord.data.actionChanges.revealedCells.map(cell => cell.key),
+			).size,
+		).toBe(chord.data.actionChanges.revealedCells.length)
+		expect(
+			chord.data.actionChanges.handledCells.every(
+				cell => cell.isRevealed,
+			),
+		).toBe(true)
 
 		chord.apply()
 		expect(engine.gameSnapshot.status).toBe('won')
@@ -321,6 +332,98 @@ describe('GameEngine', () => {
 		expect(engine.undo()).toBe(true)
 		expect(engine.gameSnapshot.status).toBe('idle')
 		expect(engine.canUndo).toBe(false)
+	})
+
+	it('keeps earlier field versions isolated across consecutive undo operations', () => {
+		const params = { rows: 5, cols: 5, mines: 3 }
+		const geometry = GeometryFactory.create({ type: 'square', params })
+		const grid = buildGrid(params, geometry, {
+			mines: [
+				{ row: 4, col: 2 },
+				{ row: 4, col: 3 },
+				{ row: 4, col: 4 },
+			],
+		})
+		const engine = GameEngine.fromPersistedState(
+			{
+				version: 1,
+				params,
+				status: 'playing',
+				field: grid,
+			},
+			{ geometry },
+		)
+
+		engine.toggleFlag({ row: 0, col: 0 }).apply()
+		engine.toggleFlag({ row: 0, col: 1 }).apply()
+
+		expect(engine.undo()).toBe(true)
+		expect(engine.gameSnapshot.field[0][0]?.isFlagged).toBe(true)
+		expect(engine.gameSnapshot.field[0][1]?.isFlagged).toBe(false)
+
+		expect(engine.undo()).toBe(true)
+		expect(engine.gameSnapshot.field[0][0]?.isFlagged).toBe(false)
+		expect(engine.gameSnapshot.field[0][1]?.isFlagged).toBe(false)
+	})
+
+	it('protects structurally shared snapshots from external mutation', () => {
+		const params = { rows: 5, cols: 5, mines: 1 }
+		const geometry = GeometryFactory.create({ type: 'square', params })
+		const grid = buildGrid(params, geometry, {
+			mines: [{ row: 4, col: 4 }],
+		})
+		const engine = GameEngine.fromPersistedState(
+			{
+				version: 1,
+				params,
+				status: 'playing',
+				field: grid,
+			},
+			{ geometry },
+		)
+		const exposedCell = engine.gameSnapshot.field[0][0]
+		expect(exposedCell).not.toBeNull()
+		expect(Reflect.set(exposedCell!, 'isFlagged', true)).toBe(false)
+		expect(Reflect.set(exposedCell!.position, 'row', 4)).toBe(false)
+
+		engine.toggleFlag({ row: 0, col: 1 }).apply()
+
+		expect(engine.gameSnapshot.field[0][0]?.isFlagged).toBe(false)
+		expect(engine.gameSnapshot.field[0][0]?.position).toEqual({
+			row: 0,
+			col: 0,
+		})
+		expect(engine.gameSnapshot.field[0][1]?.isFlagged).toBe(true)
+	})
+
+	it('does not serialize the whole 200x200 field for a flag move or undo', () => {
+		const params = { rows: 200, cols: 200, mines: 1 }
+		const geometry = GeometryFactory.create({ type: 'square', params })
+		const engine = GameEngine.fromPersistedState(
+			{
+				version: 1,
+				params,
+				status: 'playing',
+				field: buildGrid(params, geometry, {
+					mines: [{ row: 199, col: 199 }],
+				}),
+			},
+			{ geometry },
+		)
+		const toData = vi.spyOn(Cell.prototype, 'toData')
+		const clone = vi.spyOn(Cell.prototype, 'clone')
+
+		try {
+			engine.toggleFlag({ row: 0, col: 0 }).apply()
+			expect(engine.undo()).toBe(true)
+			expect(engine.gameSnapshot.field[0][0]?.isFlagged).toBe(false)
+
+			expect(toData).toHaveBeenCalledTimes(3)
+			expect(clone).toHaveBeenCalledTimes(1)
+		} finally {
+			toData.mockRestore()
+			clone.mockRestore()
+		}
 	})
 
 	it('serialize / fromPersistedState round-trips status and field', () => {

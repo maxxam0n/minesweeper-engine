@@ -1,5 +1,12 @@
 export { Solver as MinesweeperSolver } from './core/field-solver'
-export { GameEngine as MinesweeperEngine } from './core/game-engine'
+export {
+	ActionAlreadyAppliedError,
+	GameEngine as MinesweeperEngine,
+	InvalidFieldGeometryError,
+	InvalidMaxHistoryError,
+	InvalidPersistedGameStateError,
+	StaleActionError,
+} from './core/game-engine'
 export {
 	generateSolvableBoard,
 	SolvableBoardGenerationError,
@@ -16,6 +23,7 @@ export {
 	InvalidGameParamsError,
 	isValidGameParams,
 } from './lib/validate-params'
+export { InvalidRandomValueError } from './lib/random'
 export type {
 	CreateFieldAnalyzer,
 	FieldAnalyzer,

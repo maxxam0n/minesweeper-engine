@@ -17,7 +17,13 @@ export class Cell {
 		isMine = false,
 		isRevealed = false,
 	}: ConstructorCellProps) {
-		this.position = position
+		if (!Number.isSafeInteger(adjacentMines) || adjacentMines < 0) {
+			throw new RangeError(
+				`Invalid adjacent mine count: ${String(adjacentMines)}.`,
+			)
+		}
+
+		this.position = { ...position }
 		this.key = createKey(position)
 		this.isMine = isMine
 		this.isRevealed = isRevealed

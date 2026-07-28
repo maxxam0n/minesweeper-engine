@@ -5,6 +5,7 @@ import type {
 	SolvableBoardResult,
 } from '../model/solvable-board.types'
 import type { FieldGeometry, Position } from '../model/types'
+import { assertValidFieldGeometry } from '../lib/validate-field-geometry'
 import { assertValidGameParams } from '../lib/validate-params'
 import { createKey } from '../lib/utils'
 import { Solver } from './field-solver'
@@ -12,6 +13,14 @@ import { Solver } from './field-solver'
 const DEFAULT_MAX_ATTEMPTS = 500
 
 const defaultCreateAnalyzer: CreateFieldAnalyzer = field => new Solver(field)
+
+const assertValidMaxAttempts = (maxAttempts: number): void => {
+	if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
+		throw new RangeError(
+			`maxAttempts must be a positive safe integer; received ${maxAttempts}`,
+		)
+	}
+}
 
 export class SolvableBoardGenerationError extends Error {
 	readonly attempts: number
@@ -107,6 +116,7 @@ export const generateSolvableBoard = (
 	assertValidGameParams(config.params)
 
 	const { startPos, params, geometry } = config
+	assertValidFieldGeometry(geometry, params)
 
 	if (!geometry.isInBoundary(startPos)) {
 		throw new Error(
@@ -115,6 +125,8 @@ export const generateSolvableBoard = (
 	}
 
 	const maxAttempts = config.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
+	assertValidMaxAttempts(maxAttempts)
+
 	const createAnalyzer = config.createAnalyzer ?? defaultCreateAnalyzer
 	const protectedPositions = collectProtectedPositions(geometry, startPos)
 	const protectedKeys = new Set(protectedPositions.map(createKey))
@@ -150,9 +162,9 @@ export const generateSolvableBoard = (
 		if (isSolvableFromStart(field, startPos, createAnalyzer)) {
 			return {
 				data: field.getFieldSnapshot().field,
-				startPos,
+				startPos: { ...startPos },
 				attempts: attempt,
-				params,
+				params: { ...params },
 			}
 		}
 	}

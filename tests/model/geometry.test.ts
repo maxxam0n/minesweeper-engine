@@ -7,6 +7,15 @@ import { TriangularGeometry } from '../../src/model/geometry/Triangle'
 const params = { rows: 5, cols: 5, mines: 3 }
 
 describe('Geometry', () => {
+	it('copies constructor params', () => {
+		const mutableParams = { rows: 5, cols: 5, mines: 3 }
+		const geometry = new HexagonalGeometry(mutableParams)
+
+		mutableParams.rows = 10
+
+		expect(geometry.params.rows).toBe(5)
+	})
+
 	it('SquareGeometry respects boundaries', () => {
 		const geometry = new SquareGeometry(params)
 		const siblings = geometry.getSiblings({ row: 0, col: 0 })

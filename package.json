@@ -41,15 +41,18 @@
 	},
 	"sideEffects": false,
 	"files": [
-		"dist"
+		"dist",
+		"docs/assets"
 	],
 	"scripts": {
 		"build": "vite build",
-		"lint": "eslint src",
-		"lint:fix": "eslint src --fix",
+		"check": "npm test && npm run type-check && npm run lint && npm run check:package",
+		"check:package": "npm run build && node scripts/check-package.mjs",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
 		"test": "node scripts/run-vitest.mjs",
-		"type-check": "tsc --noEmit -p tsconfig.app.json",
-		"prepublishOnly": "npm run build"
+		"type-check": "tsc --noEmit -p tsconfig.app.json --pretty false && tsc --noEmit -p tsconfig.node.json --pretty false && tsc --noEmit -p tsconfig.test.json --pretty false",
+		"prepublishOnly": "npm run check"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.29.0",

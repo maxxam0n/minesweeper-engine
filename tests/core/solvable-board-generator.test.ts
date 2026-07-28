@@ -6,6 +6,8 @@ import {
 import { Field } from '../../src/model/Field'
 import { GeometryFactory } from '../../src/model/geometry/Factory'
 import { Solver } from '../../src/core/field-solver'
+import { InvalidFieldGeometryError } from '../../src/lib/validate-field-geometry'
+import type { FieldGeometry } from '../../src/model/types'
 
 describe('generateSolvableBoard', () => {
 	it('returns a closed board solvable from startPos', () => {
@@ -24,6 +26,9 @@ describe('generateSolvableBoard', () => {
 		})
 
 		expect(board.startPos).toEqual(startPos)
+		expect(board.startPos).not.toBe(startPos)
+		expect(board.params).toEqual(params)
+		expect(board.params).not.toBe(params)
 		expect(board.attempts).toBeGreaterThanOrEqual(1)
 		expect(phases).toContain('sample')
 		expect(phases).toContain('simulate')
@@ -84,5 +89,80 @@ describe('generateSolvableBoard', () => {
 				startPos: { row: 99, col: 99 },
 			}),
 		).toThrow(/startPos/)
+	})
+
+	it.each([
+		0,
+		-1,
+		1.5,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		2 ** 53,
+	])(
+		'rejects invalid maxAttempts value %s',
+		maxAttempts => {
+			const params = { rows: 5, cols: 5, mines: 3 }
+
+			expect(() =>
+				generateSolvableBoard({
+					geometry: GeometryFactory.create({ type: 'square', params }),
+					params,
+					startPos: { row: 2, col: 2 },
+					maxAttempts,
+				}),
+			).toThrow(/maxAttempts must be a positive safe integer/)
+		},
+	)
+
+	it('rejects RNG values outside the [0, 1) range', () => {
+		const params = { rows: 5, cols: 5, mines: 3 }
+
+		expect(() =>
+			generateSolvableBoard({
+				geometry: GeometryFactory.create({ type: 'square', params }),
+				params,
+				startPos: { row: 2, col: 2 },
+				maxAttempts: 1,
+				rng: () => 1,
+			}),
+		).toThrow(/RNG.*\[0, 1\)/)
+	})
+
+	it('rejects duplicate positions returned by getAllPositions', () => {
+		const params = { rows: 5, cols: 5, mines: 3 }
+		const baseGeometry = GeometryFactory.create({ type: 'square', params })
+		const positions = baseGeometry.getAllPositions?.() ?? []
+		const geometry: FieldGeometry = {
+			isInBoundary: position => baseGeometry.isInBoundary(position),
+			getSiblings: position => baseGeometry.getSiblings(position),
+			getAllPositions: () => [...positions, positions[0]],
+		}
+
+		expect(() =>
+			generateSolvableBoard({
+				geometry,
+				params,
+				startPos: { row: 2, col: 2 },
+			}),
+		).toThrow(InvalidFieldGeometryError)
+	})
+
+	it('rejects getAllPositions that disagrees with isInBoundary', () => {
+		const params = { rows: 5, cols: 5, mines: 3 }
+		const baseGeometry = GeometryFactory.create({ type: 'square', params })
+		const positions = baseGeometry.getAllPositions?.() ?? []
+		const geometry: FieldGeometry = {
+			isInBoundary: position => baseGeometry.isInBoundary(position),
+			getSiblings: position => baseGeometry.getSiblings(position),
+			getAllPositions: () => positions.slice(1),
+		}
+
+		expect(() =>
+			generateSolvableBoard({
+				geometry,
+				params,
+				startPos: { row: 2, col: 2 },
+			}),
+		).toThrow(InvalidFieldGeometryError)
 	})
 })

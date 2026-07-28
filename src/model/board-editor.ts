@@ -25,7 +25,7 @@ export class BoardEditor {
 	private readonly flagged = new Set<string>()
 
 	private constructor(params: GameParams, geometry: FieldGeometry) {
-		this.params = params
+		this.params = { ...params }
 		this.geometry = geometry
 	}
 

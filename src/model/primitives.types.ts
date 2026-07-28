@@ -3,13 +3,13 @@
  */
 export type GameParams = {
 	/** Number of columns in the field */
-	cols: number
+	readonly cols: number
 
 	/** Number of rows in the field */
-	rows: number
+	readonly rows: number
 
 	/** Total number of mines to place on the field */
-	mines: number
+	readonly mines: number
 }
 
 /**
@@ -17,10 +17,10 @@ export type GameParams = {
  */
 export type Position = {
 	/** Column index (0-based) */
-	col: number
+	readonly col: number
 
 	/** Row index (0-based) */
-	row: number
+	readonly row: number
 }
 
 /**

@@ -11,54 +11,58 @@ export class RegionAnalyzer {
 	constructor(private readonly field: FieldView) {}
 
 	/**
-	 * Groups revealed cells into connected regions.
-	 * Two revealed cells are in the same region if they share closed neighbors
-	 * (i.e., their constraints overlap). This allows solving constraint systems
-	 * independently for each region.
+	 * Группирует открытые клетки по общим закрытым соседям.
+	 * Ограничения без общих переменных можно решать независимо.
 	 */
-	public createConnectedRegions(cells: CellData[]): CellData[][] {
-		const visited = new Set<string>()
+	public createConnectedRegions(cells: readonly CellData[]): CellData[][] {
+		const entries = cells
+			.map(cell => ({
+				cell,
+				variables: this.field
+					.getSiblings(cell.position)
+					.filter(sibling => !sibling.isRevealed)
+					.map(sibling => createKey(sibling.position)),
+			}))
+			.filter(entry => entry.variables.length > 0)
+		const constraintsByVariable = new Map<string, number[]>()
+
+		for (let index = 0; index < entries.length; index++) {
+			for (const variable of entries[index].variables) {
+				const constraintIndexes = constraintsByVariable.get(variable) ?? []
+				constraintIndexes.push(index)
+				constraintsByVariable.set(variable, constraintIndexes)
+			}
+		}
+
+		const visited = new Array<boolean>(entries.length).fill(false)
 		const regions: CellData[][] = []
 
-		for (const cell of cells) {
-			const key = createKey(cell.position)
-			if (visited.has(key)) continue
+		for (let startIndex = 0; startIndex < entries.length; startIndex++) {
+			if (visited[startIndex]) continue
 
-			// Only include cells that have closed neighbors (they create constraints)
-			const siblings = this.field.getSiblings(cell.position)
-			const hasClosed = siblings.some(s => !s.isRevealed)
-
-			if (!hasClosed) continue
-
-			// BFS to find all connected revealed cells in this region
-			const group: CellData[] = []
-			const queue: CellData[] = [cell]
-
+			const region: CellData[] = []
+			const queue = [startIndex]
+			const expandedVariables = new Set<string>()
+			visited[startIndex] = true
 			while (queue.length > 0) {
-				const current = queue.pop()!
-				const currentKey = createKey(current.position)
-				if (visited.has(currentKey)) continue
+				const currentIndex = queue.pop()!
+				const current = entries[currentIndex]
+				region.push(current.cell)
 
-				visited.add(currentKey)
-				group.push(current)
+				for (const variable of current.variables) {
+					if (expandedVariables.has(variable)) continue
+					expandedVariables.add(variable)
 
-				// Find neighboring revealed cells that also have closed neighbors
-				const neighbors = this.field
-					.getSiblings(current.position)
-					.filter(n => n.isRevealed && !visited.has(createKey(n.position)))
-
-				for (const neighbor of neighbors) {
-					const nSiblings = this.field.getSiblings(neighbor.position)
-					const nHasClosed = nSiblings.some(s => !s.isRevealed)
-					if (nHasClosed) {
-						queue.push(neighbor)
+					for (const neighborIndex of constraintsByVariable.get(variable) ?? []) {
+						if (!visited[neighborIndex]) {
+							visited[neighborIndex] = true
+							queue.push(neighborIndex)
+						}
 					}
 				}
 			}
 
-			if (group.length > 0) {
-				regions.push(group)
-			}
+			regions.push(region)
 		}
 
 		return regions
@@ -69,7 +73,7 @@ export class RegionAnalyzer {
 	 * Each revealed number cell creates a constraint: exactly N of its closed neighbors are mines.
 	 * Returns the set of all variables (closed cells) and constraints (mine count equations).
 	 */
-	public buildConstraints(region: CellData[]): RegionAnalysis {
+	public buildConstraints(region: readonly CellData[]): RegionAnalysis {
 		const constraints: Constraint[] = []
 		const variables = new Set<string>()
 

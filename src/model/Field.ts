@@ -1,5 +1,10 @@
 import { createGrid, createKey } from '../lib/utils'
+import { getRandomIndex } from '../lib/random'
 import { Cell } from './Cell'
+import {
+	createFullFieldSnapshot,
+	createIncrementalFieldSnapshot,
+} from './field-snapshot.utils'
 
 import type {
 	ConstructorFieldProps,
@@ -28,8 +33,18 @@ export class Field {
 	/** Indicates whether mines have been placed on the field */
 	private minesPlaced: boolean
 
-	/** Internal grid representation of the field cells */
-	public grid: FieldCellGrid
+	private cellGrid: FieldCellGrid
+
+	/** Readonly-представление внутренней сетки поля. */
+	public get grid(): ReadonlyArray<ReadonlyArray<Cell | null>> {
+		return this.cellGrid
+	}
+
+	private ownedRows: Set<number> | null = null
+	private ownedCells: Set<string> | null = null
+	private baseSnapshot: FieldState | null = null
+	private dirtyCells: Map<string, Cell> | null = null
+	private incrementalSnapshot: FieldState | null = null
 
 	/**
 	 * Creates a new Field instance.
@@ -45,15 +60,15 @@ export class Field {
 		geometry,
 		excludeFromMines,
 	}: ConstructorFieldProps) {
-		this.params = params
+		this.params = { ...params }
 
 		this.geometry = geometry
-		this.grid = data ? this.normalizeGrid(data) : this.createGrid()
+		this.cellGrid = data ? this.normalizeGrid(data) : this.createGrid()
 
 		this.rng = rng ?? Math.random
 		// `data` — готовая раскладка (редактор / persist / clone); RNG только для пустого поля
 		this.minesPlaced =
-			data != null || this.grid.some(r => r.some(c => c?.isMine))
+			data != null || this.cellGrid.some(r => r.some(c => c?.isMine))
 		this.placeMines(excludeFromMines)
 	}
 
@@ -71,8 +86,18 @@ export class Field {
 	}
 
 	private normalizeGrid(data: FieldGrid): FieldCellGrid {
-		return data.map(row =>
-			row.map(cell => (cell ? Cell.createCell(cell) : null)),
+		return data.map((row, rowIndex) =>
+			row.map((cell, colIndex) =>
+				cell
+					? Cell.createCell({
+							position: { row: rowIndex, col: colIndex },
+							adjacentMines: cell.adjacentMines,
+							isFlagged: cell.isFlagged,
+							isMine: cell.isMine,
+							isRevealed: cell.isRevealed,
+						})
+					: null,
+			),
 		)
 	}
 
@@ -82,7 +107,48 @@ export class Field {
 	 * @returns The cell instance or null if position is out of bounds
 	 */
 	public getCell({ col, row }: Position): Cell | null {
-		return this.grid[row][col]
+		return this.cellGrid[row]?.[col] ?? null
+	}
+
+	/**
+	 * Создаёт дешёвую изменяемую версию поля.
+	 * Строки и клетки копируются только перед первой записью в них.
+	 */
+	public forkForMutation(baseSnapshot: FieldState): Field {
+		const fork = new Field({
+			geometry: this.geometry,
+			params: this.params,
+			data: [],
+			rng: this.rng,
+		})
+		fork.cellGrid = [...this.cellGrid]
+		fork.ownedRows = new Set()
+		fork.ownedCells = new Set()
+		fork.baseSnapshot = baseSnapshot
+		fork.dirtyCells = new Map()
+		return fork
+	}
+
+	public setCellRevealed(position: Position, value: boolean): Cell | null {
+		const current = this.getCell(position)
+		if (!current || current.isRevealed === value) return current
+
+		const cell = this.getWritableCell(position)
+		if (!cell) return null
+
+		cell.isRevealed = value
+		return cell
+	}
+
+	public setCellFlagged(position: Position, value: boolean): Cell | null {
+		const current = this.getCell(position)
+		if (!current || current.isFlagged === value) return current
+
+		const cell = this.getWritableCell(position)
+		if (!cell) return null
+
+		cell.isFlagged = value
+		return cell
 	}
 
 	/**
@@ -101,36 +167,50 @@ export class Field {
 	 * Places a mine at the specified position and updates adjacent cell counters.
 	 * @param position - The position where the mine should be placed
 	 */
-	public mineCell(position: Position): void {
-		const cell = this.getCell(position)
-		if (cell) {
-			cell.isMine = true
-			this.getSiblings(position).forEach(sib => {
-				sib.adjacentMines++
-			})
-		} else {
+	public mineCell(position: Position): boolean {
+		const current = this.getCell(position)
+		if (!current) {
 			console.warn(
 				`[Field] Cannot place mine: cell does not exist at position (row: ${position.row}, col: ${position.col})`,
 			)
+			return false
 		}
+		if (current.isMine) return false
+
+		const cell = this.getWritableCell(position)
+		if (!cell) return false
+
+		cell.isMine = true
+		this.getSiblings(position).forEach(sibling => {
+			const writableSibling = this.getWritableCell(sibling.position)
+			if (writableSibling) writableSibling.adjacentMines++
+		})
+		return true
 	}
 
 	/**
 	 * Removes a mine from the specified position and updates adjacent cell counters.
 	 * @param position - The position where the mine should be removed
 	 */
-	public unMineCell(position: Position): void {
-		const cell = this.getCell(position)
-		if (cell) {
-			cell.isMine = false
-			this.getSiblings(position).forEach(sib => {
-				sib.adjacentMines--
-			})
-		} else {
+	public unMineCell(position: Position): boolean {
+		const current = this.getCell(position)
+		if (!current) {
 			console.warn(
 				`[Field] Cannot remove mine: cell does not exist at position (row: ${position.row}, col: ${position.col})`,
 			)
+			return false
 		}
+		if (!current.isMine) return false
+
+		const cell = this.getWritableCell(position)
+		if (!cell) return false
+
+		cell.isMine = false
+		this.getSiblings(position).forEach(sibling => {
+			const writableSibling = this.getWritableCell(sibling.position)
+			if (writableSibling) writableSibling.adjacentMines--
+		})
+		return true
 	}
 
 	/**
@@ -204,7 +284,7 @@ export class Field {
 
 		const targetMines = Math.min(mines, candidates.length)
 		for (let i = 0; i < targetMines; i++) {
-			const idx = Math.floor(this.rng() * candidates.length)
+			const idx = getRandomIndex(candidates.length, this.rng)
 			const position = candidates.splice(idx, 1)[0]
 			this.mineCell(position)
 		}
@@ -213,9 +293,14 @@ export class Field {
 	/**
 	 * Переносит мину с `from` на `to` и пересчитывает соседние счётчики.
 	 */
-	public relocateMine(from: Position, to: Position) {
+	public relocateMine(from: Position, to: Position): boolean {
+		const source = this.getCell(from)
+		const destination = this.getCell(to)
+		if (!source?.isMine || !destination || destination.isMine) return false
+
 		this.unMineCell(from)
 		this.mineCell(to)
+		return true
 	}
 
 	/**
@@ -240,8 +325,8 @@ export class Field {
 		const queue: Cell[] = [target]
 		const visited: boolean[][] = createGrid(rows, cols, () => false)
 
-		while (queue.length) {
-			const cell = queue.shift()!
+		for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+			const cell = queue[queueIndex]
 			const { row, col } = cell.position
 			if (visited[row][col]) continue
 
@@ -257,37 +342,50 @@ export class Field {
 
 	/**
 	 * Generates a comprehensive snapshot of the current field state.
+	 * Возвращаемые данные заморожены и безопасны для structural sharing.
 	 * @returns FieldState object containing categorized cell arrays and the full grid
 	 */
 	public getFieldSnapshot(): FieldState {
-		const field = this.toDataGrid()
+		if (this.incrementalSnapshot) return this.incrementalSnapshot
+		if (!this.baseSnapshot || !this.dirtyCells) {
+			return createFullFieldSnapshot(this.cellGrid)
+		}
 
-		return field.flat().reduce<FieldState>(
-			(acc, cell) => {
-				if (cell?.isMine) acc.minedCells.push(cell)
-				if (cell?.isFlagged) acc.flaggedCells.push(cell)
-				if (cell?.isRevealed) acc.revealedCells.push(cell)
-				if (cell?.isExploded) acc.explodedCells.push(cell)
-				if (cell?.isMissed) acc.errorFlags.push(cell)
-				if (cell?.notFoundMine) acc.notFoundMines.push(cell)
-
-				return acc
-			},
-			{
-				field,
-				revealedCells: [],
-				flaggedCells: [],
-				minedCells: [],
-				explodedCells: [],
-				notFoundMines: [],
-				errorFlags: [],
-			},
+		this.incrementalSnapshot = createIncrementalFieldSnapshot(
+			this.baseSnapshot,
+			[...this.dirtyCells.values()],
 		)
+		this.baseSnapshot = null
+		this.dirtyCells = null
+		return this.incrementalSnapshot
 	}
 
 	private toDataGrid(): FieldGrid {
-		return this.grid.map(row =>
+		return this.cellGrid.map(row =>
 			row.map(cell => (cell ? cell.toData() : null)),
 		)
+	}
+
+	private getWritableCell({ col, row }: Position): Cell | null {
+		const current = this.cellGrid[row]?.[col] ?? null
+		if (!current || !this.ownedRows || !this.ownedCells) return current
+
+		if (!this.ownedRows.has(row)) {
+			this.cellGrid[row] = [...this.cellGrid[row]]
+			this.ownedRows.add(row)
+		}
+
+		if (this.ownedCells.has(current.key)) {
+			this.dirtyCells?.set(current.key, current)
+			this.incrementalSnapshot = null
+			return current
+		}
+
+		const ownedCell = current.clone()
+		this.cellGrid[row][col] = ownedCell
+		this.ownedCells.add(ownedCell.key)
+		this.dirtyCells?.set(ownedCell.key, ownedCell)
+		this.incrementalSnapshot = null
+		return ownedCell
 	}
 }

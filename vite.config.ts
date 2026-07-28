@@ -1,6 +1,9 @@
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
-import { resolve } from 'path'
 import dts from 'vite-plugin-dts'
+
+const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 
 export default defineConfig({
 	plugins: [
@@ -14,9 +17,9 @@ export default defineConfig({
 	build: {
 		lib: {
 			entry: {
-				index: resolve(__dirname, 'src/index.ts'),
-				solver: resolve(__dirname, 'src/entries/solver.ts'),
-				geometry: resolve(__dirname, 'src/entries/geometry.ts'),
+				index: resolve(projectRoot, 'src/index.ts'),
+				solver: resolve(projectRoot, 'src/entries/solver.ts'),
+				geometry: resolve(projectRoot, 'src/entries/geometry.ts'),
 			},
 			formats: ['es', 'cjs'],
 			fileName: (format, entryName) => {

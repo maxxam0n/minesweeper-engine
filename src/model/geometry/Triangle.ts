@@ -18,7 +18,11 @@ import type { FieldGeometry, GameParams, Position } from '../types'
  */
 
 export class TriangularGeometry implements FieldGeometry {
-	constructor(public readonly params: GameParams) {}
+	public readonly params: GameParams
+
+	constructor(params: GameParams) {
+		this.params = { ...params }
+	}
 
 	/**
 	 * Triangle orientation:

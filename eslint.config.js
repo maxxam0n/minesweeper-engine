@@ -6,7 +6,7 @@ export default tseslint.config([
 		ignores: ['dist/**'],
 	},
 	{
-		files: ['**/*.ts'],
+		files: ['**/*.{js,mjs,ts}'],
 		extends: [js.configs.recommended, ...tseslint.configs.recommended],
 		languageOptions: {
 			ecmaVersion: 2020,

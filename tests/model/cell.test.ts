@@ -31,4 +31,23 @@ describe('Cell.createCell', () => {
 		expect(untouched.isUntouched).toBe(true)
 		expect(untouched.isEmpty).toBe(true)
 	})
+
+	it('rejects invalid adjacent mine counters', () => {
+		expect(() =>
+			Cell.createCell({
+				position: { row: 0, col: 0 },
+				adjacentMines: -1,
+			}),
+		).toThrow(/Invalid adjacent mine count/)
+	})
+
+	it('copies the input position', () => {
+		const position = { row: 1, col: 2 }
+		const cell = Cell.createCell({ position })
+
+		position.row = 4
+
+		expect(cell.position).toEqual({ row: 1, col: 2 })
+		expect(cell.key).toBe('2-1')
+	})
 })

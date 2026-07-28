@@ -17,7 +17,11 @@ import type { FieldGeometry, GameParams, Position } from '../types'
  */
 
 export class HexagonalGeometry implements FieldGeometry {
-	constructor(public readonly params: GameParams) {}
+	public readonly params: GameParams
+
+	constructor(params: GameParams) {
+		this.params = { ...params }
+	}
 
 	public isInBoundary({ row, col }: Position): boolean {
 		return (
