@@ -1,20 +1,26 @@
-import { createKey } from '../lib/utils'
 import {
 	assertValidGameParams,
 	InvalidGameParamsError,
 } from '../lib/validate-params'
-import type { CreateFieldAnalyzer } from '../model/analyzer.types'
+import {
+	assertValidFieldGeometry,
+	InvalidFieldGeometryError,
+} from '../lib/validate-field-geometry'
+import { getRandomIndex } from '../lib/random'
+import { createKey } from '../lib/utils'
+import {
+	InvalidPersistedGameStateError,
+	validateFieldGrid,
+	validatePersistedGameState,
+} from '../lib/validate-persisted-state'
 import type { GameEngineChangeListener } from '../model/engine-events.types'
 import { Cell } from '../model/Cell'
 import { Field } from '../model/Field'
-import { GeometryFactory } from '../model/geometry/Factory'
 import type {
 	ActionResult,
 	CellData,
 	FieldGeometry,
 	FieldState,
-	FieldType,
-	GameMode,
 	GameParams,
 	GameSnapshot,
 	GameStatus,
@@ -25,78 +31,102 @@ import type {
 import {
 	PERSISTED_GAME_VERSION,
 } from '../model/types'
+import {
+	ActionAlreadyAppliedError,
+	InvalidMaxHistoryError,
+	StaleActionError,
+} from './game-engine.errors'
 
-import { Solver } from './field-solver'
-
-export { InvalidGameParamsError }
+export {
+	ActionAlreadyAppliedError,
+	InvalidFieldGeometryError,
+	InvalidGameParamsError,
+	InvalidMaxHistoryError,
+	InvalidPersistedGameStateError,
+	StaleActionError,
+}
 
 type HistoryEntry = {
 	field: Field
+	fieldState: FieldState
 	status: GameStatus
 	flagsRemaining: number
 }
 
 const DEFAULT_MAX_HISTORY = 100
 
-const defaultCreateAnalyzer: CreateFieldAnalyzer = field => new Solver(field)
+const assertValidMaxHistory: (
+	value: unknown,
+) => asserts value is number = value => {
+	if (
+		typeof value !== 'number' ||
+		!Number.isSafeInteger(value) ||
+		value < 0
+	) {
+		throw new InvalidMaxHistoryError(value)
+	}
+}
 
 /**
  * Main game engine for managing minesweeper game state and actions.
- * Handles cell revelation, flagging, game status, and mode-specific logic.
+ * Handles cell revelation, flagging, game status, and first-click relocate.
+ * Solvable layouts are produced separately via `generateSolvableBoard`.
  */
 export class GameEngine {
-	private mode: GameMode
 	private field: Field
-	private params: GameParams
+	private fieldState: FieldState
+	private readonly params: GameParams
 	private status: GameStatus
 	private flagsRemaining: number
+	private revision = 0
 
 	private readonly geometry: FieldGeometry
-	private readonly fieldType?: FieldType
-	private readonly rng?: () => number
-	private readonly createAnalyzer: CreateFieldAnalyzer
 	private readonly maxHistory: number
+	private readonly cellCount: number
 	private history: HistoryEntry[] = []
 	private readonly changeListeners = new Set<GameEngineChangeListener>()
 
 	/**
-	 * Creates a new game engine instance.
-	 * @param config - Game configuration including field type, parameters, and optional mode
-	 * @throws {InvalidGameParamsError} If rows/cols/mines fail validation
+	 * @param config - Обязательны `geometry` и `params`
+	 * @throws {InvalidGameParamsError} при невалидных params
 	 */
 	constructor(config: MineSweeperConfig) {
 		const {
-			mode = 'guessing',
-			createAnalyzer = defaultCreateAnalyzer,
 			maxHistory = DEFAULT_MAX_HISTORY,
+			geometry,
 			...fieldConfig
 		} = config
 
-		this.mode = mode
-		this.params = fieldConfig.params
+		this.params = { ...fieldConfig.params }
 		this.status = 'idle'
-		this.createAnalyzer = createAnalyzer
-		this.maxHistory = Math.max(0, maxHistory)
-		this.rng = fieldConfig.rng
-		this.fieldType = 'type' in config ? config.type : undefined
+		this.geometry = geometry
 
 		assertValidGameParams(this.params)
-
-		this.geometry =
-			'geometry' in config && config.geometry
-				? config.geometry
-				: GeometryFactory.create({
-						type: config.type!,
-						params: this.params,
-					})
+		assertValidMaxHistory(maxHistory)
+		assertValidFieldGeometry(this.geometry, this.params)
+		this.maxHistory = maxHistory
+		const fieldData =
+			fieldConfig.data === undefined
+				? undefined
+				: validateFieldGrid(
+						fieldConfig.data,
+						this.params,
+						this.geometry,
+					)
 
 		this.field = new Field({
-			params: fieldConfig.params,
-			data: fieldConfig.data,
+			params: this.params,
+			data: fieldData,
 			rng: fieldConfig.rng,
 			geometry: this.geometry,
 		})
-		this.flagsRemaining = this.field.getFieldSnapshot().minedCells.length
+		this.fieldState = this.field.getFieldSnapshot()
+		this.cellCount = this.fieldState.field.reduce(
+			(total, row) => total + row.filter(cell => cell !== null).length,
+			0,
+		)
+		this.status = this.determineInitialStatus(this.fieldState)
+		this.flagsRemaining = this.getFlagsRemaining(this.fieldState)
 	}
 
 	get canUndo(): boolean {
@@ -124,98 +154,71 @@ export class GameEngine {
 
 		const previousStatus = this.status
 		this.field = previous.field
+		this.fieldState = previous.fieldState
 		this.status = previous.status
 		this.flagsRemaining = previous.flagsRemaining
+		this.revision++
 		this.emitChange('undo', previousStatus)
 		return true
 	}
 
 	/**
 	 * Сериализует текущее состояние партии (поле + статус + params).
-	 * RNG и custom geometry в снимок не входят.
+	 * Geometry в снимок не входит — при restore передайте её в options.
 	 */
 	public serialize(): PersistedGameState {
 		return {
 			version: PERSISTED_GAME_VERSION,
-			params: this.params,
-			mode: this.mode,
+			params: { ...this.params },
 			status: this.status,
-			...(this.fieldType ? { type: this.fieldType } : {}),
-			field: this.field.getFieldSnapshot().field,
+			field: this.field.cloneGrid(),
 		}
 	}
 
 	/**
 	 * Восстанавливает движок из сериализованного состояния.
-	 * Для партий с custom geometry передайте `geometry` в options.
+	 * Передайте `options.geometry` (для legacy-снимков с `type` geometry
+	 * может быть восстановлена через GeometryFactory).
 	 */
 	public static fromPersistedState(
-		state: PersistedGameState,
+		state: unknown,
 		options?: {
 			geometry?: FieldGeometry
 			rng?: () => number
-			createAnalyzer?: CreateFieldAnalyzer
 			maxHistory?: number
 		},
 	): GameEngine {
-		if (state.version !== PERSISTED_GAME_VERSION) {
-			throw new Error(
-				`Unsupported persisted game version: ${String(state.version)}`,
-			)
-		}
+		const validated = validatePersistedGameState(state, options?.geometry)
+		const persistedState = validated.state
 
-		assertValidGameParams(state.params)
+		const engine = new GameEngine({
+			geometry: validated.geometry,
+			params: persistedState.params,
+			data: persistedState.field,
+			rng: options?.rng,
+			maxHistory: options?.maxHistory,
+		})
 
-		const geometry =
-			options?.geometry ??
-			(state.type
-				? GeometryFactory.create({ type: state.type, params: state.params })
-				: undefined)
-
-		if (!geometry) {
-			throw new Error(
-				'Persisted state has no field type; pass options.geometry to restore.',
-			)
-		}
-
-		const engine = state.type
-			? new GameEngine({
-					type: state.type,
-					params: state.params,
-					mode: state.mode,
-					data: state.field,
-					rng: options?.rng,
-					createAnalyzer: options?.createAnalyzer,
-					maxHistory: options?.maxHistory,
-				})
-			: new GameEngine({
-					geometry,
-					params: state.params,
-					mode: state.mode,
-					data: state.field,
-					rng: options?.rng,
-					createAnalyzer: options?.createAnalyzer,
-					maxHistory: options?.maxHistory,
-				})
-
-		engine.status = state.status
-		engine.flagsRemaining = engine.getFlagsRemaining(
-			engine.field.getFieldSnapshot(),
-		)
+		engine.status = persistedState.status
+		engine.flagsRemaining = engine.getFlagsRemaining(engine.fieldState)
 		engine.history = []
 		return engine
 	}
 
 	/**
 	 * Reveals a cell at the specified position.
-	 * On the first click, if the cell is mined, relocates that mine to another empty cell
-	 * (`relocateMine`) so the click is safe without regenerating the whole field.
-	 * In 'no-guessing' mode, prevents revealing cells when solver detects uncertain states.
-	 * Supports chord clicking (clicking on revealed cells to reveal adjacent safe cells).
+	 * On the first click, ensures a zero-opening at the click (relocates mines from
+	 * the cell and its neighbors outside the protected zone), then reveals the area.
+	 * Supports chord clicking.
 	 */
 	public revealCell(pos: Position): ActionResult {
+		const actionRevision = this.revision
+		if (!this.field.getCell(pos) || this.isTerminal) {
+			return this.createNoOpActionResult(pos, actionRevision)
+		}
+
 		let actionStatus: GameStatus = this.status
-		const operatedField = this.field.cloneSelf()
+		const operatedField = this.field.forkForMutation(this.fieldState)
 
 		const flaggedCells: CellData[] = []
 		const unflaggedCells: CellData[] = []
@@ -223,58 +226,26 @@ export class GameEngine {
 		const handledCells: CellData[] = []
 		const explodedCells: CellData[] = []
 
+		let openingFailed = false
 		if (actionStatus === 'idle') {
-			if (operatedField.cloneCell(pos)?.isMine) {
-				const unminedCell = operatedField.grid
-					.flat()
-					.find(cell => cell && !cell.isMine)
-				if (!unminedCell) {
-					actionStatus = 'lost'
-				} else {
-					operatedField.relocateMine(pos, unminedCell.position)
-					actionStatus = 'playing'
-				}
+			if (!GameEngine.ensureFirstClickOpening(operatedField, pos)) {
+				openingFailed = true
+				actionStatus = 'lost'
 			} else {
 				actionStatus = 'playing'
 			}
 		}
 
-		const target = operatedField.getCell(pos)
-		if (!target) {
-			return GameEngine.emptyActionResult(pos)
-		}
+		let target = operatedField.getCell(pos)
+		if (!target) return this.createNoOpActionResult(pos, actionRevision)
 
 		if (actionStatus === 'playing' && !target.isFlagged) {
 			if (target.isMine) {
-				const handleLoss = () => {
-					target.isRevealed = true
-					const targetSnapshot = GameEngine.snapshotCell(target)
-					handledCells.push(targetSnapshot)
-					explodedCells.push(targetSnapshot)
-				}
-
-				if (this.mode === 'no-guessing') {
-					const analyzer = this.createAnalyzer(operatedField)
-					const probabilities = analyzer.solve()
-
-					if (analyzer.isGuessingState(probabilities)) {
-						if (
-							probabilities.some(
-								p =>
-									p.value === 1 &&
-									createKey(p.position) === target.key,
-							)
-						) {
-							handleLoss()
-						} else {
-							return this.toggleFlag(pos)
-						}
-					} else {
-						handleLoss()
-					}
-				} else {
-					handleLoss()
-				}
+				target =
+					operatedField.setCellRevealed(target.position, true) ?? target
+				const targetSnapshot = GameEngine.snapshotCell(target)
+				handledCells.push(targetSnapshot)
+				explodedCells.push(targetSnapshot)
 			} else if (target.isRevealed) {
 				const result = this.handleRevealedClick(target, operatedField)
 				revealedCells.push(...result.revealedCells)
@@ -285,30 +256,104 @@ export class GameEngine {
 				const result = this.openArea(pos, operatedField)
 				revealedCells.push(...result.revealedCells)
 				unflaggedCells.push(...result.unflaggedCells)
+				target = operatedField.getCell(pos) ?? target
 				handledCells.push(GameEngine.snapshotCell(target))
 			}
 		}
 
 		const resultState = operatedField.getFieldSnapshot()
-		actionStatus = this.determineStatus(resultState)
+		// Failed opening уже 'lost'; determineStatus иначе вернул бы 'playing'
+		actionStatus = openingFailed
+			? 'lost'
+			: this.determineStatus(resultState)
+		target = operatedField.getCell(pos) ?? target
 		const targetSnapshot = GameEngine.snapshotCell(target)
 
-		return {
-			data: {
-				actionSnapshot: { ...resultState, status: actionStatus },
-				actionChanges: {
-					target: targetSnapshot,
-					explodedCells,
-					flaggedCells,
-					revealedCells,
-					handledCells,
-					unflaggedCells,
-				},
-			},
-			apply: () => {
-				this.commit(operatedField, actionStatus, resultState)
+		const data: ActionResult['data'] = {
+			actionSnapshot: { ...resultState, status: actionStatus },
+			actionChanges: {
+				target: targetSnapshot,
+				explodedCells,
+				flaggedCells,
+				revealedCells,
+				handledCells,
+				unflaggedCells,
 			},
 		}
+		const hasChanges =
+			resultState !== this.fieldState || actionStatus !== this.status
+
+		return this.createActionResult(
+			data,
+			actionRevision,
+			hasChanges
+				? () => {
+						this.commit(operatedField, actionStatus, resultState)
+					}
+				: undefined,
+		)
+	}
+
+	/**
+	 * Гарантирует opening на первом клике: стартовая клетка становится `isEmpty`
+	 * за счёт relocate мин с неё и её соседей за пределы защищённой зоны.
+	 * @returns `false`, если некуда перенести мины
+	 */
+	private static ensureFirstClickOpening(
+		field: Field,
+		startPos: Position,
+	): boolean {
+		if (!field.getCell(startPos)) return false
+
+		const protectedKeys = new Set<string>([
+			createKey(startPos),
+			...field.getSiblings(startPos).map(sibling => sibling.key),
+		])
+
+		const relocateOut = (from: Position): boolean => {
+			const destination = GameEngine.findRelocateDestination(
+				field,
+				protectedKeys,
+				from,
+			)
+			if (!destination) return false
+			field.relocateMine(from, destination)
+			return true
+		}
+
+		if (field.getCell(startPos)?.isMine && !relocateOut(startPos)) return false
+
+		const maxRelocations = protectedKeys.size + 1
+		for (let i = 0; i < maxRelocations; i++) {
+			if (field.getCell(startPos)?.isEmpty) break
+			const minedNeighbor = field
+				.getSiblings(startPos)
+				.find(sibling => sibling.isMine)
+			if (!minedNeighbor) break
+			if (!relocateOut(minedNeighbor.position)) return false
+		}
+
+		return field.getCell(startPos)?.isEmpty ?? false
+	}
+
+	/**
+	 * Цель для переноса мины: случайная безопасная клетка вне защищённой зоны старта.
+	 */
+	private static findRelocateDestination(
+		field: Field,
+		protectedKeys: Set<string>,
+		from: Position,
+	): Position | null {
+		const fromKey = createKey(from)
+		const candidates: Position[] = []
+		for (const cell of field.grid.flat()) {
+			if (!cell || cell.isMine) continue
+			if (protectedKeys.has(cell.key) || cell.key === fromKey) continue
+			candidates.push(cell.position)
+		}
+		if (candidates.length === 0) return null
+		const idx = getRandomIndex(candidates.length, field.rng)
+		return candidates[idx] ?? null
 	}
 
 	/**
@@ -316,20 +361,27 @@ export class GameEngine {
 	 * Only works on unrevealed cells during active gameplay.
 	 */
 	public toggleFlag(pos: Position): ActionResult {
-		const operatedField = this.field.cloneSelf()
+		const actionRevision = this.revision
+		if (!this.field.getCell(pos) || this.status !== 'playing') {
+			return this.createNoOpActionResult(pos, actionRevision)
+		}
+
+		const operatedField = this.field.forkForMutation(this.fieldState)
 
 		const flaggedCells: CellData[] = []
 		const unflaggedCells: CellData[] = []
 
-		const cell = operatedField.getCell(pos)
-		if (!cell) return GameEngine.emptyActionResult(pos)
+		let cell = operatedField.getCell(pos)
+		if (!cell) return this.createNoOpActionResult(pos, actionRevision)
 
 		if (this.status === 'playing' && !cell.isRevealed) {
 			if (cell.isFlagged) {
-				cell.isFlagged = false
+				cell =
+					operatedField.setCellFlagged(cell.position, false) ?? cell
 				unflaggedCells.push(GameEngine.snapshotCell(cell))
 			} else if (this.flagsRemaining > 0) {
-				cell.isFlagged = true
+				cell =
+					operatedField.setCellFlagged(cell.position, true) ?? cell
 				flaggedCells.push(GameEngine.snapshotCell(cell))
 			}
 		}
@@ -337,22 +389,27 @@ export class GameEngine {
 		const resultState = operatedField.getFieldSnapshot()
 		const targetSnapshot = GameEngine.snapshotCell(cell)
 
-		return {
-			data: {
-				actionSnapshot: { ...resultState, status: this.status },
-				actionChanges: {
-					explodedCells: [],
-					flaggedCells,
-					unflaggedCells,
-					handledCells: [],
-					revealedCells: [],
-					target: targetSnapshot,
-				},
-			},
-			apply: () => {
-				this.commit(operatedField, this.status, resultState)
+		const data: ActionResult['data'] = {
+			actionSnapshot: { ...resultState, status: this.status },
+			actionChanges: {
+				explodedCells: [],
+				flaggedCells,
+				unflaggedCells,
+				handledCells: [],
+				revealedCells: [],
+				target: targetSnapshot,
 			},
 		}
+
+		return this.createActionResult(
+			data,
+			actionRevision,
+			resultState !== this.fieldState
+				? () => {
+						this.commit(operatedField, this.status, resultState)
+					}
+				: undefined,
+		)
 	}
 
 	private commit(
@@ -364,7 +421,9 @@ export class GameEngine {
 		this.pushHistory()
 		this.status = status
 		this.field = operatedField
+		this.fieldState = resultState
 		this.flagsRemaining = this.getFlagsRemaining(resultState)
+		this.revision++
 		this.emitChange('apply', previousStatus)
 	}
 
@@ -387,7 +446,8 @@ export class GameEngine {
 		if (this.maxHistory === 0) return
 
 		this.history.push({
-			field: this.field.cloneSelf(),
+			field: this.field,
+			fieldState: this.fieldState,
 			status: this.status,
 			flagsRemaining: this.flagsRemaining,
 		})
@@ -415,12 +475,19 @@ export class GameEngine {
 		if (flags === targetCell.adjacentMines) {
 			const handledTargets = [...closedSiblings]
 
-			for (const sibCell of siblings) {
+			for (const sibling of siblings) {
+				const sibCell = operatedField.getCell(sibling.position)
+				if (!sibCell) continue
 				if (sibCell.isFlagged || sibCell.isRevealed) continue
 
 				if (sibCell.isMine && !sibCell.isFlagged) {
-					sibCell.isRevealed = true
-					explodedCells.push(GameEngine.snapshotCell(sibCell))
+					const revealedCell = operatedField.setCellRevealed(
+						sibCell.position,
+						true,
+					)
+					if (revealedCell) {
+						explodedCells.push(GameEngine.snapshotCell(revealedCell))
+					}
 				} else {
 					const openResult = this.openArea(sibCell.position, operatedField)
 					revealedCells.push(...openResult.revealedCells)
@@ -429,7 +496,11 @@ export class GameEngine {
 			}
 
 			handledCells.push(
-				...handledTargets.map(cell => GameEngine.snapshotCell(cell)),
+				...handledTargets.map(cell =>
+					GameEngine.snapshotCell(
+						operatedField.getCell(cell.position) ?? cell,
+					),
+				),
 			)
 		}
 
@@ -450,13 +521,18 @@ export class GameEngine {
 		area.forEach(cellToProcess => {
 			const wasFlagged = cellToProcess.isFlagged
 			const wasRevealed = cellToProcess.isRevealed
+			let changedCell = cellToProcess
 			if (wasFlagged) {
-				cellToProcess.isFlagged = false
-				unflaggedCells.push(GameEngine.snapshotCell(cellToProcess))
+				changedCell =
+					operatedField.setCellFlagged(cellToProcess.position, false) ??
+					changedCell
+				unflaggedCells.push(GameEngine.snapshotCell(changedCell))
 			}
 			if (!wasRevealed) {
-				cellToProcess.isRevealed = true
-				revealedCells.push(GameEngine.snapshotCell(cellToProcess))
+				changedCell =
+					operatedField.setCellRevealed(cellToProcess.position, true) ??
+					changedCell
+				revealedCells.push(GameEngine.snapshotCell(changedCell))
 			}
 		})
 		return { unflaggedCells, revealedCells }
@@ -464,18 +540,68 @@ export class GameEngine {
 
 	private determineStatus(resultState: FieldState) {
 		const revealedCount = resultState.revealedCells.length
-		const totalCells = resultState.field
-			.flat()
-			.filter((cell): cell is CellData => cell !== null).length
-		const safeCells = totalCells - resultState.minedCells.length
+		const safeCells = this.cellCount - resultState.minedCells.length
 
 		if (resultState.explodedCells.length > 0) return 'lost'
 		else if (revealedCount === safeCells) return 'won'
 		else return 'playing'
 	}
 
+	private determineInitialStatus(resultState: FieldState): GameStatus {
+		if (resultState.explodedCells.length > 0) return 'lost'
+
+		const safeCells = this.cellCount - resultState.minedCells.length
+		if (resultState.revealedCells.length === safeCells) return 'won'
+		if (
+			resultState.revealedCells.length > 0 ||
+			resultState.flaggedCells.length > 0
+		) {
+			return 'playing'
+		}
+		return 'idle'
+	}
+
+	private get isTerminal(): boolean {
+		return this.status === 'won' || this.status === 'lost'
+	}
+
 	private getFlagsRemaining(resultState: FieldState) {
 		return resultState.minedCells.length - resultState.flaggedCells.length
+	}
+
+	private createActionResult(
+		data: ActionResult['data'],
+		actionRevision: number,
+		applyChanges?: () => void,
+	): ActionResult {
+		let wasApplied = false
+
+		return {
+			data,
+			apply: () => {
+				if (wasApplied) throw new ActionAlreadyAppliedError()
+				if (this.revision !== actionRevision) {
+					throw new StaleActionError(actionRevision, this.revision)
+				}
+
+				wasApplied = true
+				applyChanges?.()
+			},
+		}
+	}
+
+	private createNoOpActionResult(
+		pos: Position,
+		actionRevision: number,
+	): ActionResult {
+		return this.createActionResult(
+			GameEngine.createEmptyActionData(
+				pos,
+				this.gameSnapshot,
+				this.field.getCell(pos) ?? undefined,
+			),
+			actionRevision,
+		)
 	}
 
 	private static snapshotCell(cell: CellData | Cell): CellData {
@@ -484,7 +610,7 @@ export class GameEngine {
 	}
 
 	get gameSnapshot(): GameSnapshot {
-		return { ...this.field.getFieldSnapshot(), status: this.status }
+		return { ...this.fieldState, status: this.status }
 	}
 
 	static emptySnapshot(status: GameStatus): GameSnapshot {
@@ -501,20 +627,37 @@ export class GameEngine {
 	}
 
 	static emptyActionResult(pos: Position): ActionResult {
-		const target = Cell.createCell({ position: pos }).toData()
+		let wasApplied = false
 		return {
-			data: {
-				actionSnapshot: GameEngine.emptySnapshot('idle'),
-				actionChanges: {
-					target,
-					handledCells: [],
-					flaggedCells: [],
-					unflaggedCells: [],
-					revealedCells: [],
-					explodedCells: [],
-				},
+			data: GameEngine.createEmptyActionData(
+				pos,
+				GameEngine.emptySnapshot('idle'),
+			),
+			apply: () => {
+				if (wasApplied) throw new ActionAlreadyAppliedError()
+				wasApplied = true
 			},
-			apply: () => {},
+		}
+	}
+
+	private static createEmptyActionData(
+		pos: Position,
+		actionSnapshot: GameSnapshot,
+		targetCell?: CellData | Cell,
+	): ActionResult['data'] {
+		const target = targetCell
+			? GameEngine.snapshotCell(targetCell)
+			: Cell.createCell({ position: pos }).toData()
+		return {
+			actionSnapshot,
+			actionChanges: {
+				target,
+				handledCells: [],
+				flaggedCells: [],
+				unflaggedCells: [],
+				revealedCells: [],
+				explodedCells: [],
+			},
 		}
 	}
 }

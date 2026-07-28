@@ -20,12 +20,10 @@ export class ProbabilityStore {
 		return this.probabilities.get(key)
 	}
 
-	public setExactIfAbsent(
-		key: string,
-		value: 0 | 1,
-		position: Position,
-	): boolean {
-		if (this.probabilities.has(key)) return false
+	public setExact(key: string, value: 0 | 1, position: Position): boolean {
+		const existing = this.probabilities.get(key)
+		if (existing?.value === 0 || existing?.value === 1) return false
+
 		this.probabilities.set(key, { value, position })
 		return true
 	}

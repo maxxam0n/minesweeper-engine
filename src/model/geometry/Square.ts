@@ -1,23 +1,16 @@
 import type { FieldGeometry, GameParams, Position } from '../types'
 
-/*
- * Representation: even-q vertical layout (columns are "straight",
- * even columns are shifted down). This allows storing the field as a regular
- * rectangular array rows × cols.
- *
- *   even-q offsets (col % 2 === 0)
- *        (-1,+0)  (+1,+0)
- *   (-1,-1)            (+1,-1)
- *        (-1,+1)  (+1,+1)
- *
- *   odd-q offsets (col % 2 === 1)
- *        (-1,+0)  (+1,+0)
- *   (-1,+1)            (+1,+1)
- *        (-1,-1)  (+1,-1)
+/**
+ * Квадратная сетка с восемью соседями: четыре по сторонам и четыре по диагоналям.
+ * Поле хранится в обычном прямоугольном массиве `rows × cols`.
  */
 
 export class SquareGeometry implements FieldGeometry {
-	constructor(public readonly params: GameParams) {}
+	public readonly params: GameParams
+
+	constructor(params: GameParams) {
+		this.params = { ...params }
+	}
 
 	public isInBoundary({ row, col }: Position): boolean {
 		return (

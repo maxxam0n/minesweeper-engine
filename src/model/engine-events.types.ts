@@ -4,9 +4,9 @@ import type { GameStatus } from './primitives.types'
 export type GameEngineChangeReason = 'apply' | 'undo'
 
 export type GameEngineChangeEvent = {
-	reason: GameEngineChangeReason
-	snapshot: GameSnapshot
-	previousStatus: GameStatus
+	readonly reason: GameEngineChangeReason
+	readonly snapshot: GameSnapshot
+	readonly previousStatus: GameStatus
 }
 
 export type GameEngineChangeListener = (event: GameEngineChangeEvent) => void

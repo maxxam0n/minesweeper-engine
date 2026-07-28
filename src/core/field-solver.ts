@@ -1,8 +1,8 @@
 import { Field } from '../model/Field'
-import { GeometryFactory } from '../model/geometry/Factory'
 import type { CellData, MineProbability } from '../model/types'
 import type { FieldView, SolverConfig } from '../model/field-solver.types'
 import { DirectInference } from './field-solver/direct-inference'
+import { reduceConstraintSystem } from './field-solver/constraint-reducer'
 import { ProbabilityStore } from './field-solver/probability-store'
 import { RegionAnalyzer } from './field-solver/region-analyzer'
 import { RegionEnumerator } from './field-solver/region-enumerator'
@@ -91,7 +91,7 @@ export class Solver {
 	 * splits into independent subregions, and enumerates valid configurations
 	 * to find certain mines and safe cells.
 	 */
-	private inferBySetTheory(cells: CellData[]): boolean {
+	private inferBySetTheory(cells: readonly CellData[]): boolean {
 		let updated = false
 
 		// Group revealed cells into connected regions (cells that share closed neighbors)
@@ -100,8 +100,12 @@ export class Solver {
 		for (const region of regions) {
 			// Build constraint system: each revealed number cell creates a constraint
 			// stating that exactly N of its closed neighbors are mines
-			const { variables, constraints } =
-				this.regionAnalyzer.buildConstraints(region)
+			const analysis = this.regionAnalyzer.buildConstraints(region)
+			const { variables, constraints } = reduceConstraintSystem(
+				analysis.variables,
+				analysis.constraints,
+				this.probabilities,
+			)
 
 			// Split region into independent subregions (connected components of variables)
 			// This allows solving smaller subproblems independently
@@ -126,7 +130,6 @@ export class Solver {
 			return config
 		}
 
-		const geometry = config.geometry || GeometryFactory.create(config)
-		return new Field({ ...config, geometry })
+		return new Field(config)
 	}
 }

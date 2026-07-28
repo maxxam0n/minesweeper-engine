@@ -1,6 +1,7 @@
 import { createKey, difference, isSubset, parseKey } from '../../lib/utils'
 import type { CellData } from '../../model/types'
 import type { FieldView, Subset } from '../../model/field-solver.types'
+import { reduceCellConstraint } from './constraint-reducer'
 import { ProbabilityStore } from './probability-store'
 
 export class DirectInference {
@@ -13,7 +14,7 @@ export class DirectInference {
 	 * Infers certain mines: if a number cell has exactly N mines and N closed neighbors
 	 * (after accounting for known safe cells), all closed neighbors must be mines.
 	 */
-	public inferCertainMines(cells: CellData[]): boolean {
+	public inferCertainMines(cells: readonly CellData[]): boolean {
 		let updated = false
 
 		for (const cell of cells) {
@@ -21,21 +22,23 @@ export class DirectInference {
 
 			const siblings = this.field.getSiblings(cell.position)
 			const closed = siblings.filter(s => !s.isRevealed)
-
-			if (closed.length === 0) continue
-
-			// Count how many closed neighbors are already known to be safe
-			const knownSafe = closed.filter(
-				s => this.probabilities.get(createKey(s.position))?.value === 0,
+			const { unresolvedCells, minesLeft } = reduceCellConstraint(
+				closed,
+				cell.adjacentMines,
+				this.probabilities,
 			)
 
-			// If remaining closed cells exactly match the remaining mine count, all are mines
-			if (cell.adjacentMines === closed.length - knownSafe.length) {
-				for (const sib of closed) {
-					const key = createKey(sib.position)
-					if (this.probabilities.setExactIfAbsent(key, 1, sib.position)) {
-						updated = true
-					}
+			if (
+				unresolvedCells.length === 0 ||
+				minesLeft !== unresolvedCells.length
+			) {
+				continue
+			}
+
+			for (const sibling of unresolvedCells) {
+				const key = createKey(sibling.position)
+				if (this.probabilities.setExact(key, 1, sibling.position)) {
+					updated = true
 				}
 			}
 		}
@@ -48,7 +51,7 @@ export class DirectInference {
 	 * identified among closed neighbors (via solver probabilities, not player flags),
 	 * all remaining closed neighbors are safe.
 	 */
-	public inferCertainSafeCells(cells: CellData[]): boolean {
+	public inferCertainSafeCells(cells: readonly CellData[]): boolean {
 		let updated = false
 
 		for (const cell of cells) {
@@ -56,21 +59,18 @@ export class DirectInference {
 
 			const siblings = this.field.getSiblings(cell.position)
 			const closed = siblings.filter(s => !s.isRevealed)
-
-			if (closed.length === 0) continue
-
-			// Count how many closed neighbors are already known to be mines
-			const knownMines = closed.filter(
-				s => this.probabilities.get(createKey(s.position))?.value === 1,
+			const { unresolvedCells, minesLeft } = reduceCellConstraint(
+				closed,
+				cell.adjacentMines,
+				this.probabilities,
 			)
 
-			// If we've found all required mines, remaining closed neighbors are safe
-			if (knownMines.length === cell.adjacentMines) {
-				for (const sib of closed) {
-					const key = createKey(sib.position)
-					if (this.probabilities.setExactIfAbsent(key, 0, sib.position)) {
-						updated = true
-					}
+			if (unresolvedCells.length === 0 || minesLeft !== 0) continue
+
+			for (const sibling of unresolvedCells) {
+				const key = createKey(sibling.position)
+				if (this.probabilities.setExact(key, 0, sibling.position)) {
+					updated = true
 				}
 			}
 		}
@@ -88,7 +88,7 @@ export class DirectInference {
 	 * - If M - N = 0: all cells in difference are safe
 	 * - If M - N = |difference|: all cells in difference are mines
 	 */
-	public inferBySubsetDifference(cells: CellData[]): boolean {
+	public inferBySubsetDifference(cells: readonly CellData[]): boolean {
 		let updated = false
 
 		const subsets: Subset[] = []
@@ -100,25 +100,25 @@ export class DirectInference {
 
 			const siblings = this.field.getSiblings(cell.position)
 			const closedSiblings = siblings.filter(sib => !sib.isRevealed)
-
-			if (closedSiblings.length === 0) continue
-
-			// Filter out already-known mines to get remaining unknown cells
-			const minesUnknown = closedSiblings.filter(
-				s => this.probabilities.get(createKey(s.position))?.value === 1,
+			const { unresolvedCells, minesLeft } = reduceCellConstraint(
+				closedSiblings,
+				cell.adjacentMines,
+				this.probabilities,
 			)
 
-			const minesLeft = cell.adjacentMines - minesUnknown.length
-
-			const subsetPositions = closedSiblings
-				.filter(s => !minesUnknown.includes(s))
-				.map(s => createKey(s.position))
-
-			if (subsetPositions.length === 0 || minesLeft <= 0) continue
+			if (
+				unresolvedCells.length === 0 ||
+				minesLeft < 0 ||
+				minesLeft > unresolvedCells.length
+			) {
+				continue
+			}
 
 			subsets.push({
 				key: createKey(cell.position),
-				positions: new Set(subsetPositions),
+				positions: new Set(
+					unresolvedCells.map(sibling => createKey(sibling.position)),
+				),
 				mineCount: minesLeft,
 			})
 		}
@@ -143,7 +143,7 @@ export class DirectInference {
 					if (diffMineCount === 0) {
 						diff.forEach(pos => {
 							if (
-								this.probabilities.setExactIfAbsent(
+								this.probabilities.setExact(
 									pos,
 									0,
 									parseKey(pos),
@@ -156,7 +156,7 @@ export class DirectInference {
 						// If difference requires all to be mines, all are mines
 						diff.forEach(pos => {
 							if (
-								this.probabilities.setExactIfAbsent(
+								this.probabilities.setExact(
 									pos,
 									1,
 									parseKey(pos),
@@ -174,7 +174,7 @@ export class DirectInference {
 					if (diffMineCount === 0) {
 						diff.forEach(pos => {
 							if (
-								this.probabilities.setExactIfAbsent(
+								this.probabilities.setExact(
 									pos,
 									0,
 									parseKey(pos),
@@ -186,7 +186,7 @@ export class DirectInference {
 					} else if (diffMineCount === diff.size) {
 						diff.forEach(pos => {
 							if (
-								this.probabilities.setExactIfAbsent(
+								this.probabilities.setExact(
 									pos,
 									1,
 									parseKey(pos),
@@ -210,32 +210,33 @@ export class DirectInference {
 	 *
 	 * This provides a heuristic estimate when exact inference isn't possible.
 	 */
-	public inferByLocalRatios(cells: CellData[]): void {
+	public inferByLocalRatios(cells: readonly CellData[]): void {
 		for (const cell of cells) {
 			if (cell.isEmpty || cell.isMine) continue
 
 			const siblings = this.field.getSiblings(cell.position)
 			const closed = siblings.filter(s => !s.isRevealed)
-
-			if (closed.length === 0) continue
-
-			const knownMines = closed.filter(
-				s => this.probabilities.get(createKey(s.position))?.value === 1,
+			const { unresolvedCells, minesLeft } = reduceCellConstraint(
+				closed,
+				cell.adjacentMines,
+				this.probabilities,
 			)
 
-			const unknown = closed.filter(s => !knownMines.includes(s))
+			if (
+				unresolvedCells.length === 0 ||
+				minesLeft < 0 ||
+				minesLeft > unresolvedCells.length
+			) {
+				continue
+			}
 
-			if (unknown.length === 0) continue
+			const probability = minesLeft / unresolvedCells.length
 
-			// Calculate probability: remaining mines / unknown cells
-			const remainingMines = cell.adjacentMines - knownMines.length
-			const prob = remainingMines / unknown.length
-
-			// Assign probability to unknown neighbors (only if not already set)
-			for (const sib of unknown) {
-				const key = createKey(sib.position)
+			// Более точную ранее рассчитанную вероятность не заменяем.
+			for (const sibling of unresolvedCells) {
+				const key = createKey(sibling.position)
 				if (this.probabilities.has(key)) continue
-				this.probabilities.setProbability(key, prob)
+				this.probabilities.setProbability(key, probability)
 			}
 		}
 	}

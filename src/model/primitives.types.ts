@@ -3,13 +3,13 @@
  */
 export type GameParams = {
 	/** Number of columns in the field */
-	cols: number
+	readonly cols: number
 
 	/** Number of rows in the field */
-	rows: number
+	readonly rows: number
 
 	/** Total number of mines to place on the field */
-	mines: number
+	readonly mines: number
 }
 
 /**
@@ -17,10 +17,10 @@ export type GameParams = {
  */
 export type Position = {
 	/** Column index (0-based) */
-	col: number
+	readonly col: number
 
 	/** Row index (0-based) */
-	row: number
+	readonly row: number
 }
 
 /**
@@ -32,10 +32,3 @@ export type FieldType = 'square' | 'hexagonal' | 'triangle'
  * Current state of the game.
  */
 export type GameStatus = 'idle' | 'playing' | 'won' | 'lost'
-
-/**
- * Game mode determining whether guessing is allowed.
- * - `'no-guessing'`: Prevents moves that require guessing when solver detects uncertain states
- * - `'guessing'`: Allows any move, including those that require guessing
- */
-export type GameMode = 'no-guessing' | 'guessing'

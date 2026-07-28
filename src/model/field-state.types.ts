@@ -5,23 +5,23 @@ import type { CellData, FieldGrid } from './cell.types'
  */
 export interface FieldState {
 	/** Two-dimensional array of all cells organized by rows */
-	field: FieldGrid
+	readonly field: FieldGrid
 
 	/** All cells that contain mines */
-	minedCells: CellData[]
+	readonly minedCells: readonly CellData[]
 
 	/** All cells that exploded (mines that were revealed) */
-	explodedCells: CellData[]
+	readonly explodedCells: readonly CellData[]
 
 	/** All cells that are currently flagged */
-	flaggedCells: CellData[]
+	readonly flaggedCells: readonly CellData[]
 
 	/** All mines that were not flagged (used for end-game analysis) */
-	notFoundMines: CellData[]
+	readonly notFoundMines: readonly CellData[]
 
 	/** All cells that were incorrectly flagged (flags on non-mine cells) */
-	errorFlags: CellData[]
+	readonly errorFlags: readonly CellData[]
 
 	/** All cells that have been revealed */
-	revealedCells: CellData[]
+	readonly revealedCells: readonly CellData[]
 }

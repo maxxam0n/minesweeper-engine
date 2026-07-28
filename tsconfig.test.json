@@ -1,0 +1,10 @@
+{
+	"extends": "./tsconfig.app.json",
+	"compilerOptions": {
+		"composite": false,
+		"declaration": false,
+		"types": ["node"]
+	},
+	"include": ["src", "tests"],
+	"exclude": ["node_modules", "dist"]
+}
